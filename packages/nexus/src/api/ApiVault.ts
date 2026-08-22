@@ -10,8 +10,26 @@ export const API_PROVIDERS = [
   "google",
   "cerebras",
   "openai",
+  "anthropic",
+  "xai",
+  "mistral",
+  "togetherai",
+  "perplexity",
+  "cohere",
+  "fireworks",
+  "moonshotai",
   "opencode",
 ] as const
+
+const PROVIDER_ALIASES: Record<string, string> = {
+  claude: "anthropic",
+  grok: "xai",
+  together: "togetherai",
+  pplx: "perplexity",
+  kimi: "moonshotai",
+  moonshot: "moonshotai",
+  or: "openrouter",
+}
 export type ApiProvider = (typeof API_PROVIDERS)[number]
 export type ApiKeyStatus = "active" | "rate_limited" | "invalid" | "suspended" | "unknown"
 
@@ -145,7 +163,8 @@ export function saveUsage(usage: Record<string, ProviderUsage>): void {
 }
 
 export function normalizeProvider(provider: string): ApiProvider | undefined {
-  const normalized = provider.trim().toLowerCase()
+  const raw = provider.trim().toLowerCase().replace(/[\s_]+/g, "-")
+  const normalized = PROVIDER_ALIASES[raw] ?? raw
   if (normalized === "google") return "gemini"
   return (API_PROVIDERS as readonly string[]).includes(normalized) ? (normalized as ApiProvider) : undefined
 }
@@ -557,3 +576,24 @@ export function resetApiVaultForTests(): void {
 }
 
 export { emptyVault }
+
+export function resolveProviderLabel(provider: string): string {
+  const names: Record<string, string> = {
+    anthropic: "Anthropic (Claude)",
+    gemini: "Google Gemini",
+    xai: "xAI (Grok)",
+    moonshotai: "Moonshot AI (Kimi)",
+    togetherai: "Together AI",
+    openrouter: "OpenRouter",
+    deepseek: "DeepSeek",
+    mistral: "Mistral AI",
+    perplexity: "Perplexity",
+    cohere: "Cohere",
+    fireworks: "Fireworks AI",
+    cerebras: "Cerebras",
+    groq: "Groq",
+    openai: "OpenAI",
+    opencode: "OpenCode Gateway",
+  }
+  return names[provider] ?? provider
+}

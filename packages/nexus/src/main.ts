@@ -35,6 +35,7 @@ import { ConfigCommand } from "./cli/cmd/config"
 import { DevCommand } from "./cli/cmd/dev"
 import { LiaisonCommand } from "./cli/cmd/liaison"
 import { ApiCommand } from "./cli/cmd/api"
+import { AssistantCommand } from "./cli/cmd/assistant"
 import { Heap } from "./cli/heap"
 import { ModCommand } from "./cli/cmd/mod"
 import { AssetCommand } from "./cli/cmd/asset"
@@ -123,6 +124,7 @@ const cli = yargs(args)
   .command(ModCommand)
   .command(AssetCommand)
   .command(LuaCommand)
+  .command(AssistantCommand)
   .fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||
@@ -147,6 +149,27 @@ try {
   } else {
     await cli.parse()
   }
+let nexusCleanupDone = false
+function nexusCleanup(): void {
+  if (nexusCleanupDone) return
+  nexusCleanupDone = true
+  if (process.platform === "linux" && require("fs").existsSync("/data/data/com.termux/files/usr/bin/termux-wake-unlock")) {
+    try {
+      Bun.spawnSync(["termux-wake-unlock"], { stdout: "ignore", stderr: "ignore" })
+    } catch {}
+  }
+}
+
+process.on("SIGINT", () => {
+  nexusCleanup()
+  process.stderr.write(EOL + "\x1b[96m[nexus]\x1b[0m closed cleanly\n")
+  process.exit(130)
+})
+process.on("SIGTERM", () => {
+  nexusCleanup()
+  process.exit(143)
+})
+
 } catch (e) {
   const formatted = FormatError(e)
   if (formatted) UI.error(formatted)
@@ -160,5 +183,6 @@ try {
   // Most notably, some docker-container-based MCP servers don't handle such signals unless
   // run using `docker run --init`.
   // Explicitly exit to avoid any hanging subprocesses.
+  nexusCleanup()
   if (!keepAliveForLiaisonTask) process.exit()
 }
