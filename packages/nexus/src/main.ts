@@ -139,16 +139,6 @@ const cli = yargs(args)
   })
   .strict()
 
-try {
-  if (args.includes("-h") || args.includes("--help")) {
-    await cli.parse(args, (err: Error | undefined, _argv: unknown, out: string) => {
-      if (err) throw err
-      if (!out) return
-      show(out)
-    })
-  } else {
-    await cli.parse()
-  }
 let nexusCleanupDone = false
 function nexusCleanup(): void {
   if (nexusCleanupDone) return
@@ -170,6 +160,16 @@ process.on("SIGTERM", () => {
   process.exit(143)
 })
 
+try {
+  if (args.includes("-h") || args.includes("--help")) {
+    await cli.parse(args, (err: Error | undefined, _argv: unknown, out: string) => {
+      if (err) throw err
+      if (!out) return
+      show(out)
+    })
+  } else {
+    await cli.parse()
+  }
 } catch (e) {
   const formatted = FormatError(e)
   if (formatted) UI.error(formatted)
