@@ -115,7 +115,7 @@ async function sync(ctx: PluginContext): Promise<number | void> {
     return 0
   }
 
-  const versionMaps: Array<Record<string, Record<string, string>>> = []
+  const versionMaps: Array<Record<string, string>> = []
   for (const project of projects) {
     const pkgPath = path.join(ctx.cwd, project.path, "package.json")
     if (!(await Bun.file(pkgPath).exists())) continue

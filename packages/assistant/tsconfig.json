@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/tsconfig",
   "extends": "@tsconfig/bun/tsconfig.json",
   "compilerOptions": {
-    "types": [],
+    "types": ["bun"],
     "noUncheckedIndexedAccess": false
   },
   "include": ["src"]

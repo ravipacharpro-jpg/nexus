@@ -374,7 +374,7 @@ async function serve(ctx: PluginContext): Promise<number | void> {
 
 async function convert(ctx: PluginContext): Promise<number | void> {
   const mod = await import("./translator")
-  const translator = (mod.default ?? mod.plugin) as NexusPlugin
+  const translator = mod.default as NexusPlugin
   const translate = translator.commands.find((c) => c.name === "translate")
   if (!translate) {
     ctx.err("Translator plugin unavailable")

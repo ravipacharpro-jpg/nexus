@@ -1,6 +1,6 @@
 import path from "path"
 import os from "os"
-import { Style, Icon } from "../core/style"
+import { Style, Icon, ok, bad, dim } from "../core/style"
 import type { NexusPlugin, PluginContext } from "../core/types"
 
 const BG_DIR = path.join(os.homedir(), ".nexus", "bg")
@@ -64,19 +64,17 @@ async function list(ctx: PluginContext): Promise<number | void> {
   }
 
   for (const meta of metas.slice(0, 20)) {
-    const alive = Bun.which("kill") ? await Bun.spawn(["sh", "-c", `kill -0 ${meta.pid} 2>/dev/null && echo yes || echo no`]).exited.then(() => undefined).catch(() => undefined) ?? undefined : undefined
     let statusText = Style.TEXT_DIM + "unknown"
     const codeFile = Bun.file(path.join(dir, `${meta.id}.code`))
     if (await codeFile.exists()) {
       const code = parseInt((await codeFile.text()).trim())
-      statusText = code === 0 ? Style.ok("done") : bad(`exit ${code}`)
-    } else if ((await import("fs/promises")).then) {
+      statusText = code === 0 ? ok("done") : bad(`exit ${code}`)
+    } else {
       const aliveProc = Bun.spawn(["sh", "-c", `kill -0 ${meta.pid} 2>/dev/null; echo $?`], { stdout: "pipe", stderr: "ignore" })
       await aliveProc.exited
       const out = (await new Response(aliveProc.stdout).text()).trim()
-      statusText = out === "0" ? `${Style.TEXT_SUCCESS_BOLD}running${Style.TEXT_NORMAL}` : Style.dim("dead")
+      statusText = out === "0" ? `${Style.TEXT_SUCCESS_BOLD}running${Style.TEXT_NORMAL}` : dim("dead")
     }
-    void alive
     ctx.out(`  ${Style.TEXT_HIGHLIGHT}${meta.id.padEnd(14)}${Style.TEXT_NORMAL} ${statusText}  ${Style.TEXT_DIM}${meta.command.slice(0, 60)}${Style.TEXT_NORMAL}`)
   }
   void notifyDone

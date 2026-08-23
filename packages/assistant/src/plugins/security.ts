@@ -1,12 +1,12 @@
 import path from "path"
-import { Style, Icon } from "../core/style"
+import { Style, Icon, ok, bad } from "../core/style"
 import type { NexusPlugin, PluginContext } from "../core/types"
 
 const EOL = "\n"
 
 interface PermissionRisk {
   permission: string
-  risk: "critical" | "high" | "medium"
+  risk: "critical" | "high" | "medium" | "low"
   why: string
 }
 
@@ -31,7 +31,7 @@ const TRACKER_SIGNATURES = [
   "com.yandex.",
 ]
 
-const SUSPICIOUS_STRINGS = [
+const SUSPICIOUS_STRINGS: Array<[RegExp, string]> = [
   [/"Ld?alvik\/system[^"]*exec|system\("cmd|Runtime\.getRuntime\(\)\.exec/i, "Native/exec calls"],
   [/frida|xposed|substrate/i, "Hooking framework references (anti-cheat ya cheat engine)"],
   [/libil2cpp|global-metadata\.dat/, "Unity IL2CPP hooks (mod menu engines common)"],
@@ -64,7 +64,8 @@ function scanText(text: string): {
   const trackers = TRACKER_SIGNATURES.filter((sig) => text.includes(sig))
   const suspicious: Array<[string, string]> = []
   for (const [regex, label] of SUSPICIOUS_STRINGS) {
-    if (new RegExp(regex.source, "i").test(text)) suspicious.push([label, regex.source.slice(0, 40)])
+    const source = regex instanceof RegExp ? regex.source : String(regex)
+    if (new RegExp(source, "i").test(text)) suspicious.push([label, source.slice(0, 40)])
   }
 
   const urlSet = new Set<string>()

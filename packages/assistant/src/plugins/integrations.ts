@@ -1,6 +1,6 @@
 import path from "path"
 import os from "os"
-import { dim, Icon } from "../core/style"
+import { dim, Icon, Style } from "../core/style"
 import { getSecret, setSecret, deleteSecret } from "../core/secret-store"
 import type { NexusPlugin, PluginContext } from "../core/types"
 
