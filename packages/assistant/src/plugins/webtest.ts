@@ -163,14 +163,8 @@ function auditHtml(html: string): DomAudit {
   }
 }
 
-async function visual(ctx: PluginContext): Promise<number | void> {
-  let url = ctx.args.find((a) => /^https?:\/\//.test(a))
-  if (!url) {
-    ctx.err("Usage: nexus webtest visual <url>")
-    return 1
-  }
-
-  ctx.out(`${Icon.eye} NEXUS Visual QA: ${url}`)
+async function visualHttpOnly(ctx: PluginContext, url: string): Promise<number | void> {
+  ctx.out(`${Icon.eye} NEXUS Visual QA (http-only): ${url}`)
   const report = auditHtml(await (await fetch(url, { signal: AbortSignal.timeout(15000) })).text().catch(() => ""))
   let score = 100 - report.issues.reduce((sum, i) => sum + (i.severity === "high" ? 20 : i.severity === "medium" ? 10 : 5), 0)
   score = Math.max(0, Math.min(100, score))
@@ -181,7 +175,7 @@ async function visual(ctx: PluginContext): Promise<number | void> {
   ctx.out(`  Images: ${report.images.length} | Buttons: ${report.buttons} | Forms: ${report.forms}`)
 
   if (ctx.llm) {
-    ctx.out(`${Icon.brain} AI vision analysis...`)
+    ctx.out(`${Icon.brain} AI analysis...`)
     const analysis = await ctx.llm.generate(
       `You are a UI/UX QA expert reviewing this webpage data. URL: ${url}\nTitle: ${report.title}\nHeadings: ${JSON.stringify(report.headings)}\nImages: ${JSON.stringify(report.images)}\nIssues found: ${JSON.stringify(report.issues)}\nGive: design score 0-100, top 3 priority fixes, any layout/UX concerns. Be concise.`,
     )
@@ -190,17 +184,282 @@ async function visual(ctx: PluginContext): Promise<number | void> {
     ctx.out(`${Style.TEXT_DIM}(connect an LLM via api add for full AI vision analysis)${Style.TEXT_NORMAL}`)
   }
 
-  if (report.issues.length === 0) {
+  printIssuesAndScore(ctx, report.issues, score)
+  return report.issues.some((i) => i.severity === "high") ? 1 : 0
+}
+
+function printIssuesAndScore(ctx: PluginContext, issues: DomAudit["issues"], score: number): void {
+  if (issues.length === 0) {
     ctx.out(`  ${Icon.success} No structural issues detected`)
   } else {
     const icon = { high: Icon.fail, medium: Icon.warn, low: Icon.info } as Record<string, string>
-    for (const issue of report.issues) {
+    for (const issue of issues) {
       ctx.out(`  ${icon[issue.severity] ?? Icon.info} [${issue.severity}] ${issue.problem}`)
       ctx.out(`      ${Style.TEXT_DIM}Fix: ${issue.suggestion}${Style.TEXT_NORMAL}`)
     }
   }
   ctx.out(`\n${Icon.rocket} Design Score: ${score >= 80 ? ok(`${score}/100`) : score >= 50 ? `${score}/100` : bad(`${score}/100`)}`)
-  return report.issues.some((i) => i.severity === "high") ? 1 : 0
+}
+
+interface ViewportDefinition {
+  name: string
+  width: number
+  height: number
+}
+
+const VISUAL_VIEWPORTS: ViewportDefinition[] = [
+  { name: "desktop", width: 1280, height: 720 },
+  { name: "tablet", width: 768, height: 1024 },
+  { name: "mobile", width: 375, height: 667 },
+]
+
+async function runVisual(ctx: PluginContext, url: string): Promise<number | void> {
+  const { chromium } = await import("playwright-core")
+  const executablePath = Bun.which("chromium") ?? Bun.which("chromium-browser") ?? undefined
+  if (!executablePath) {
+    ctx.err(`${Icon.warn} chromium binary not found — falling back to http-only checks`)
+    return visualHttpOnly(ctx, url)
+  }
+
+  const browser = await chromium.launch({ executablePath, args: ["--no-sandbox"] })
+  const page = await browser.newPage()
+  const outDir = path.join(ctx.cwd, "nexus-reports", "visual")
+  await import("fs/promises").then((fs) => fs.mkdir(outDir, { recursive: true }))
+  const stamp = new Date().toISOString().slice(0, 10)
+
+  ctx.out(`${Icon.eye} NEXUS Visual QA: ${url}`)
+  ctx.out(dim(`📸 Capturing ${VISUAL_VIEWPORTS.length} viewports: ${VISUAL_VIEWPORTS.map((v) => v.name).join(", ")}`))
+
+  const issues: DomAudit["issues"] = []
+  const screenshots: Array<{ name: string; image: string }> = []
+
+  for (const viewport of VISUAL_VIEWPORTS) {
+    try {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height })
+      await page.goto(url, { waitUntil: "networkidle", timeout: 30000 })
+      const shotFile = path.join(outDir, `${viewport.name}-${stamp}.png`)
+      await page.screenshot({ path: shotFile, fullPage: true })
+      screenshots.push({ name: viewport.name, image: Buffer.from(await Bun.file(shotFile).arrayBuffer()).toString("base64") })
+
+      const rendered = await page.evaluate(() => ({
+        horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        tinyFonts: [...document.querySelectorAll<HTMLElement>("body *")].filter(
+          (el) => el.offsetParent !== null && parseFloat(getComputedStyle(el).fontSize) < 12 && (el.textContent?.trim().length ?? 0) > 0,
+        ).length,
+        brokenImages: [...document.images].filter((img) => img.complete && img.naturalWidth === 0).length,
+      }))
+
+      if (rendered.horizontalOverflow > 2) {
+        issues.push({
+          severity: viewport.name === "mobile" ? "high" : "medium",
+          problem: `[${viewport.name}] Horizontal overflow of ${rendered.horizontalOverflow}px — content cut off sideways`,
+          suggestion: `Add responsive breakpoints / flexible widths for ${viewport.width}px viewport`,
+        })
+      }
+      if (rendered.brokenImages > 0) {
+        issues.push({ severity: "high", problem: `[${viewport.name}] ${rendered.brokenImages} broken image(s)`, suggestion: "Fix image src paths" })
+      }
+      if (rendered.tinyFonts > 0) {
+        issues.push({
+          severity: "medium",
+          problem: `[${viewport.name}] ${rendered.tinyFonts} element(s) below 12px font`,
+          suggestion: "Increase font size for readability (min 12px)",
+        })
+      }
+      ctx.out(`  ${Icon.success} ${viewport.name} (${viewport.width}×${viewport.height}) captured`)
+    } catch (error) {
+      ctx.out(`  ${Icon.fail} ${viewport.name}: ${error instanceof Error ? error.message : String(error)}`)
+      issues.push({ severity: "medium", problem: `[${viewport.name}] capture failed`, suggestion: "Check page availability/timeout" })
+    }
+  }
+
+  await browser.close()
+
+  const domReport = auditHtml(await (await fetch(url, { signal: AbortSignal.timeout(15000) })).text().catch(() => ""))
+  issues.push(...domReport.issues)
+
+  if (ctx.llm && screenshots.length > 0) {
+    ctx.out(`${Icon.brain} AI vision analysis across ${screenshots.length} screenshots...`)
+    try {
+      const analysis = await ctx.llm.generate(
+        `You are a UI/UX expert and QA engineer. Analyze these ${screenshots.length} website screenshots (${screenshots.map((s) => s.name).join(", ")} viewports).\nGoal: find layout breakage, misalignment, contrast problems, missing elements, responsiveness issues.\nStatic checks already found: ${JSON.stringify(domReport.issues)}\nRespond with: design score 0-100, top 3 priority fixes, any extra visual issues. Be concise.`,
+        screenshots.map((s) => s.image),
+      )
+      ctx.out(analysis)
+    } catch (error) {
+      ctx.out(dim(`AI vision skipped: ${error instanceof Error ? error.message : String(error)}`))
+    }
+  } else if (!ctx.llm) {
+    ctx.out(`${Style.TEXT_DIM}(connect an LLM via api add for full AI vision analysis of the saved screenshots)${Style.TEXT_NORMAL}`)
+  }
+
+  let score = 100 - issues.reduce((sum, i) => sum + (i.severity === "high" ? 20 : i.severity === "medium" ? 10 : 5), 0)
+  score = Math.max(0, Math.min(100, score))
+  printIssuesAndScore(ctx, issues, score)
+  ctx.out(`${Style.TEXT_DIM}Screenshots: ${outDir}/{desktop,tablet,mobile}-${stamp}.png${Style.TEXT_NORMAL}`)
+  return issues.some((i) => i.severity === "high") ? 1 : 0
+}
+
+async function visual(ctx: PluginContext): Promise<number | void> {
+  let url = ctx.args.find((a) => /^https?:\/\//.test(a)) ?? ctx.args.find(Boolean)
+  if (!url) {
+    ctx.err("Usage: nexus webtest visual <url>")
+    return 1
+  }
+  if (!/^https?:\/\//.test(url)) url = "https://" + url
+
+  const status = await checkPlaywright()
+  if (!status.ok) {
+    ctx.err(dim(status.reason ?? "browser unavailable"))
+    ctx.out(dim("Running http-only structural checks instead."))
+    return visualHttpOnly(ctx, url)
+  }
+  return runVisual(ctx, url)
+}
+
+interface RecordedStep {
+  action: "goto" | "click" | "fill"
+  selector?: string
+  value?: string
+}
+
+const RECORDER_INIT_SCRIPT = `
+(() => {
+  if (window.__nexusRecorder) return
+  window.__nexusRecorder = true
+  const selectorFor = (el) => {
+    if (!el || el.nodeType !== 1) return null
+    if (el.id) return '#' + CSS.escape(el.id)
+    if (el.getAttribute('data-testid')) return '[data-testid="' + el.getAttribute('data-testid') + '"]'
+    if (el.getAttribute('name')) return el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]'
+    if (el.getAttribute('aria-label')) return el.tagName.toLowerCase() + '[aria-label="' + el.getAttribute('aria-label').slice(0,40) + '"]'
+    if (/^(A|BUTTON)$/.test(el.tagName)) {
+      const text = (el.textContent || '').trim().slice(0, 30)
+      if (text) return 'text=' + text
+    }
+    return el.tagName.toLowerCase()
+  }
+  addEventListener('click', (e) => {
+    const s = selectorFor(e.target)
+    if (s) console.log('__NX_STEP__' + JSON.stringify({ action: 'click', selector: s }))
+  }, true)
+  addEventListener('change', (e) => {
+    const el = e.target
+    const s = selectorFor(el)
+    if (!s || !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return
+    const secret = el.type === 'password'
+    console.log('__NX_STEP__' + JSON.stringify({ action: 'fill', selector: s, value: secret ? '***' : String(el.value ?? '').slice(0, 80) }))
+  }, true)
+})()
+`
+
+function escapeSpecString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
+}
+
+function generateSpec(url: string, steps: RecordedStep[]): string {
+  const lines = [
+    "import { test, expect } from '@playwright/test'",
+    "",
+    `// Recorded by NEXUS WebTest recorder on ${new Date().toISOString()}`,
+    `// Source: ${url}`,
+    "test('recorded flow', async ({ page }) => {",
+    ...steps.map((step) => {
+      if (step.action === "goto") return `  await page.goto('${escapeSpecString(step.value ?? "")}')`
+      if (step.action === "click") return `  await page.click('${escapeSpecString(step.selector ?? "")}')`
+      return `  await page.fill('${escapeSpecString(step.selector ?? "")}', '${escapeSpecString(step.value ?? "")}')`
+    }),
+    "})",
+    "",
+  ]
+  return lines.join("\n")
+}
+
+async function waitForEnter(ctx: PluginContext): Promise<void> {
+  process.stderr.write(`${Style.TEXT_HIGHLIGHT_BOLD}Press ENTER in this terminal to stop recording...${Style.TEXT_NORMAL}${EOL}`)
+  process.stdin.setEncoding("utf8")
+  process.stdin.resume()
+  await new Promise<void>((resolve) => process.stdin.once("data", () => resolve()))
+}
+
+async function record(ctx: PluginContext): Promise<number | void> {
+  const status = await checkPlaywright()
+  if (!status.ok) {
+    ctx.err(`Recorder unavailable: ${status.reason}`)
+    return 1
+  }
+  const executablePath = Bun.which("chromium") ?? Bun.which("chromium-browser") ?? undefined
+  if (!executablePath) {
+    ctx.err("chromium binary not found — install it (bun x playwright install chromium) and retry")
+    return 1
+  }
+
+  let url = ctx.args.find((a) => /^https?:\/\//.test(a))
+  if (!url) {
+    const bare = ctx.args.find(Boolean)
+    if (!bare) {
+      ctx.err("Usage: nexus webtest record <url> [--output ./tests/login.spec.js]")
+      return 1
+    }
+    url = "https://" + bare
+  }
+
+  ctx.out(`${Icon.robot} NEXUS Screen-to-Code Recorder`)
+  ctx.out(dim("Perform your actions in the opened browser. Password fields are NEVER recorded."))
+
+  const { chromium } = await import("playwright-core")
+  const browser = await chromium.launch({ executablePath, args: ["--no-sandbox"], headless: false })
+  const page = await browser.newPage()
+  await page.addInitScript(RECORDER_INIT_SCRIPT)
+
+  const steps: RecordedStep[] = [{ action: "goto", value: url }]
+  let lastUrl = url
+
+  page.on("console", (msg) => {
+    const text = msg.text()
+    if (!text.startsWith("__NX_STEP__")) return
+    try {
+      const step = JSON.parse(text.slice("__NX_STEP__".length)) as RecordedStep
+      steps.push(step)
+      ctx.out(`  ${dim("+")} ${step.action}${step.selector ? ` ${step.selector}` : ""}${step.value ? ` → "${step.value}"` : ""}`)
+    } catch {}
+  })
+
+  page.on("framenavigated", (frame) => {
+    if (frame !== page.mainFrame()) return
+    const current = frame.url()
+    if (current && current !== lastUrl && current !== "about:blank") {
+      lastUrl = current
+      steps.push({ action: "goto", value: current })
+    }
+  })
+
+  try {
+    await page.goto(url, { waitUntil: "networkidle", timeout: 30000 })
+  } catch (error) {
+    ctx.err(`Could not open ${url}: ${error instanceof Error ? error.message : String(error)}`)
+    await browser.close()
+    return 1
+  }
+
+  await waitForEnter(ctx)
+  await browser.close().catch(() => {})
+
+  const specSteps = steps.filter(
+    (step, index) =>
+      !(step.action === "goto" && index > 0 && steps[index - 1]?.action === "goto") &&
+      !(step.action === "fill" && step.value === ""),
+  )
+
+  const outFile = path.resolve(ctx.cwd, typeof ctx.flags.output === "string" ? ctx.flags.output : path.join("tests", `recorded-${Date.now()}.spec.js`))
+  await import("fs/promises").then((fs) => fs.mkdir(path.dirname(outFile), { recursive: true }))
+  await Bun.write(outFile, generateSpec(url, specSteps))
+
+  ctx.out("")
+  ctx.out(`${Icon.success} ${specSteps.length} step(s) recorded`)
+  ctx.out(`${Icon.plugin} Generated: ${outFile}`)
+  ctx.out(dim(`Run with: npx playwright test ${outFile}`))
+  return 0
 }
 
 async function run(ctx: PluginContext): Promise<number | void> {
@@ -414,8 +673,8 @@ pre{background:#1e293b;padding:1rem;border-radius:8px;overflow-x:auto} li{margin
 const plugin: NexusPlugin = {
   name: "webtest",
   version: "0.1.0",
-  description: "Website testing agent — smoke, headers, forms + bug reporting (browser optional)",
-  tags: ["test", "qa", "bugs", "website"],
+  description: "Website testing agent — scenarios, multi-viewport visual QA, bug reports, screen-to-code recorder",
+  tags: ["test", "qa", "bugs", "website", "recorder"],
   requires: {
     check: () => ({ ok: true }),
   },
@@ -428,17 +687,15 @@ const plugin: NexusPlugin = {
     },
     {
       name: "visual",
-      describe: "visual QA needs playwright-core + chromium (AI vision analysis optional)",
+      describe: "multi-viewport visual QA (desktop/tablet/mobile screenshots + AI vision, http-only fallback)",
       usage: "nexus webtest visual <url>",
-      run: async (ctx) => {
-        const status = await checkPlaywright()
-        if (!status.ok) {
-          ctx.err(`Visual QA unavailable: ${status.reason}`)
-          ctx.out(dim("HTTP-only alternative: nexus webtest run <url>"))
-          return 1
-        }
-        return run(ctx)
-      },
+      run: visual,
+    },
+    {
+      name: "record",
+      describe: "screen-to-code recorder — perform actions in a browser, get a Playwright spec",
+      usage: "nexus webtest record <url> [--output ./tests/login.spec.js]",
+      run: record,
     },
   ],
 }
