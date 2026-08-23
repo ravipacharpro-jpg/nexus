@@ -1,35 +1,13 @@
 import fs from "fs"
 import os from "os"
 import path from "path"
+import { PROVIDER_CONTRACTS, REGISTRY_PROVIDER_IDS, contractFor, type ProviderContract } from "./providers"
 
-export const API_PROVIDERS = [
-  "groq",
-  "openrouter",
-  "deepseek",
-  "gemini",
-  "google",
-  "cerebras",
-  "openai",
-  "anthropic",
-  "xai",
-  "mistral",
-  "togetherai",
-  "perplexity",
-  "cohere",
-  "fireworks",
-  "moonshotai",
-  "opencode",
-] as const
+export const API_PROVIDERS = REGISTRY_PROVIDER_IDS
 
-const PROVIDER_ALIASES: Record<string, string> = {
-  claude: "anthropic",
-  grok: "xai",
-  together: "togetherai",
-  pplx: "perplexity",
-  kimi: "moonshotai",
-  moonshot: "moonshotai",
-  or: "openrouter",
-}
+const PROVIDER_ALIASES: Record<string, string> = Object.fromEntries(
+  Object.values(PROVIDER_CONTRACTS).flatMap((contract) => (contract.aliases ?? []).map((alias) => [alias, contract.id])),
+)
 export type ApiProvider = (typeof API_PROVIDERS)[number]
 export type ApiKeyStatus = "active" | "rate_limited" | "invalid" | "suspended" | "unknown"
 
@@ -406,17 +384,17 @@ export async function discoverProviderModels(
   key: string,
 ): Promise<{ status: ApiKeyStatus; models: string[]; code?: number }> {
   const provider = normalizeProvider(providerInput)
-  const endpoint = endpointFor(providerInput)
-  if (!provider || !endpoint) return { status: "unknown", models: [] }
+  const contract = contractFor(providerInput)
+  if (!provider || !contract) return { status: "unknown", models: [] }
   const cacheKey = `${provider}:${key}`
   const cached = discoveredModelsCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now()) return { status: "active", models: cached.models }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 8000)
   try {
-    const headers: Record<string, string> = { Authorization: `Bearer ${key}` }
-    const url = provider === "gemini" ? `${endpoint}?key=${encodeURIComponent(key)}` : endpoint
-    if (provider === "gemini") delete headers.Authorization
+    const headers = authHeadersFor(contract, key)
+    const url =
+      contract.auth === "query" ? `${contract.modelsEndpoint}?key=${encodeURIComponent(key)}` : contract.modelsEndpoint
     const response = await fetch(url, { headers, signal: controller.signal })
     if (response.status === 401 || response.status === 403)
       return { status: "invalid", models: [], code: response.status }
@@ -462,28 +440,25 @@ export function apiVaultHasKeys(providerInput?: string): boolean {
 }
 
 function endpointFor(providerInput: string): string | undefined {
-  const provider = normalizeProvider(providerInput)
-  if (!provider) return undefined
-  if (provider === "groq") return "https://api.groq.com/openai/v1/models"
-  if (provider === "openrouter") return "https://openrouter.ai/api/v1/models"
-  if (provider === "deepseek") return "https://api.deepseek.com/models"
-  if (provider === "gemini") return "https://generativelanguage.googleapis.com/v1beta/models"
-  if (provider === "cerebras") return "https://api.cerebras.ai/v1/models"
-  if (provider === "openai") return "https://api.openai.com/v1/models"
-  if (provider === "opencode") return "https://opencode.ai/zen/v1/models"
-  return undefined
+  return contractFor(providerInput)?.modelsEndpoint
+}
+
+function authHeadersFor(contract: ProviderContract, key: string): Record<string, string> {
+  if (contract.auth === "query") return {}
+  if (contract.auth === "x-api-key") return { "x-api-key": key, ...(contract.headers ?? {}) }
+  return { Authorization: `Bearer ${key}`, ...(contract.headers ?? {}) }
 }
 
 export async function checkKey(providerInput: string, key: string): Promise<{ status: ApiKeyStatus; code?: number }> {
   const provider = normalizeProvider(providerInput)
-  const endpoint = endpointFor(providerInput)
-  if (!provider || !endpoint) return { status: "unknown" }
+  const contract = contractFor(providerInput)
+  if (!provider || !contract) return { status: "unknown" }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 8000)
   try {
-    const headers: Record<string, string> = { Authorization: `Bearer ${key}` }
-    const url = provider === "gemini" ? `${endpoint}?key=${encodeURIComponent(key)}` : endpoint
-    if (provider === "gemini") delete headers.Authorization
+    const headers = authHeadersFor(contract, key)
+    const url =
+      contract.auth === "query" ? `${contract.modelsEndpoint}?key=${encodeURIComponent(key)}` : contract.modelsEndpoint
     const response = await fetch(url, { headers, signal: controller.signal })
     if (response.ok) return { status: "active", code: response.status }
     if (response.status === 401 || response.status === 403) return { status: "invalid", code: response.status }
@@ -578,22 +553,5 @@ export function resetApiVaultForTests(): void {
 export { emptyVault }
 
 export function resolveProviderLabel(provider: string): string {
-  const names: Record<string, string> = {
-    anthropic: "Anthropic (Claude)",
-    gemini: "Google Gemini",
-    xai: "xAI (Grok)",
-    moonshotai: "Moonshot AI (Kimi)",
-    togetherai: "Together AI",
-    openrouter: "OpenRouter",
-    deepseek: "DeepSeek",
-    mistral: "Mistral AI",
-    perplexity: "Perplexity",
-    cohere: "Cohere",
-    fireworks: "Fireworks AI",
-    cerebras: "Cerebras",
-    groq: "Groq",
-    openai: "OpenAI",
-    opencode: "OpenCode Gateway",
-  }
-  return names[provider] ?? provider
+  return contractFor(provider)?.label ?? provider
 }
