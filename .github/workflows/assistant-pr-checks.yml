@@ -28,17 +28,17 @@ jobs:
   cli-smoke:
     name: CLI startup + API vault smoke
     runs-on: ubuntu-latest
-    env:
-      HOME: ${{ runner.temp }}/nexus-home
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
       - name: Isolated HOME
-        run: mkdir -p "$HOME"
+        run: echo "HOME=$RUNNER_TEMP/nexus-home" >> "$GITHUB_ENV"
       - name: Install dependencies
-        run: bun install
+        run: |
+          mkdir -p "$HOME"
+          bun install
       - name: nexus --version / --help
         run: |
           bun packages/nexus/src/index.ts --version
