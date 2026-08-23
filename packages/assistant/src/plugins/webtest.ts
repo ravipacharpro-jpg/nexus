@@ -164,7 +164,7 @@ function auditHtml(html: string): DomAudit {
 }
 
 async function visual(ctx: PluginContext): Promise<number | void> {
-  let url = ctx.args.find((a) => /^https?:\/\//.test(a)) 
+  let url = ctx.args.find((a) => /^https?:\/\//.test(a))
   if (!url) {
     ctx.err("Usage: nexus webtest visual <url>")
     return 1

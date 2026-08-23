@@ -34,4 +34,3 @@ export const Icon = {
   lock: "🔐",
   brain: "🧠",
 }
-
