@@ -1,5 +1,6 @@
 import path from "path"
 import { Style, Icon, dim } from "../core/style"
+import { getSecret, setSecret, deleteSecret } from "../core/secret-store"
 import type { NexusPlugin, PluginContext } from "../core/types"
 
 interface UapiResponse {
@@ -12,28 +13,44 @@ interface UapiResponse {
 interface CpanelConfig {
   host: string
   user: string
-  token: string
 }
 
 function configPath(ctx: PluginContext): string {
   return path.join(process.env.HOME ?? ctx.cwd, ".nexus", "cpanel.json")
 }
 
-async function loadConfig(ctx: PluginContext): Promise<CpanelConfig | undefined> {
+const TOKEN_SECRET = "cpanel.token"
+
+async function loadToken(ctx: PluginContext): Promise<string | undefined> {
+  const stored = getSecret(TOKEN_SECRET)
+  if (stored) return stored
+  const keyFile = Bun.file(configPath(ctx) + ".key")
+  if (!(await keyFile.exists())) return undefined
+  const legacy = (await keyFile.text()).trim()
+  if (!legacy) return undefined
+  setSecret(TOKEN_SECRET, legacy)
+  await Bun.write(configPath(ctx) + ".key", "")
+  await Bun.$`rm -f ${configPath(ctx) + ".key"}`.quiet().catch(() => {})
+  return legacy
+}
+
+async function loadConfig(ctx: PluginContext): Promise<CpanelConfig & { token: string } | undefined> {
   const file = Bun.file(configPath(ctx))
   if (!(await file.exists())) return undefined
   const data = (await file.json()) as CpanelConfig
-  const keyFile = Bun.file(configPath(ctx) + ".key")
-  if (await keyFile.exists()) {
-    const token = (await keyFile.text()).trim()
-    if (token) return { ...data, token }
-  }
-  return undefined
+  const token = await loadToken(ctx)
+  if (!token) return undefined
+  return { ...data, token }
 }
 
-async function saveConfig(ctx: PluginContext, config: CpanelConfig) {
-  await Bun.write(configPath(ctx), JSON.stringify({ ...config, token: maskToken(config.token) }, null, 2))
-  await Bun.write(configPath(ctx) + ".key", config.token, { mode: 0o600 })
+async function saveConfig(ctx: PluginContext, config: CpanelConfig & { token?: string }) {
+  await Bun.write(configPath(ctx), JSON.stringify({ host: config.host, user: config.user }, null, 2))
+  if (config.token) setSecret(TOKEN_SECRET, config.token)
+}
+
+async function clearConfig(ctx: PluginContext) {
+  deleteSecret(TOKEN_SECRET)
+  await Bun.$`rm -f ${configPath(ctx)}`.quiet().catch(() => {})
 }
 
 function maskToken(token: string): string {
@@ -41,8 +58,14 @@ function maskToken(token: string): string {
   return token.slice(0, 4) + "…" + token.slice(-4)
 }
 
-async function uapi(ctx: PluginContext, module: string, fn: string, params: Record<string, string> = {}): Promise<UapiResponse | undefined> {
-  const config = await loadConfig(ctx)
+async function uapi(
+  ctx: PluginContext,
+  module: string,
+  fn: string,
+  params: Record<string, string> = {},
+  configOverride?: CpanelConfig & { token: string },
+): Promise<UapiResponse | undefined> {
+  const config = configOverride ?? (await loadConfig(ctx))
   if (!config) {
     ctx.err("Not connected — run: nexus cpanel connect --host <host> --user <user>")
     return undefined
@@ -99,8 +122,21 @@ async function connect(ctx: PluginContext): Promise<number | void> {
     return 1
   }
 
-  await saveConfig(ctx, { host: hostFlag, user: userFlag, token })
-  ctx.out(`${Icon.success} Connected. Token stored locally (${maskToken(token)}), never transmitted anywhere else.`)
+  const candidate = { host: hostFlag, user: userFlag, token }
+  ctx.out(dim("Validating token with a read-only call…"))
+  const probe = await uapi(ctx, "Mysql", "list_databases", {}, candidate)
+  if (!probe) {
+    ctx.err("Token validation failed — nothing was saved. Check host/user/token and try again.")
+    return 1
+  }
+
+  await saveConfig(ctx, candidate)
+  ctx.out(`${Icon.success} Connected and verified. Token encrypted at rest (${maskToken(token)}).`)
+}
+
+async function disconnect(ctx: PluginContext): Promise<number | void> {
+  await clearConfig(ctx)
+  ctx.out(`${Icon.success} Disconnected. Stored token removed.`)
 }
 
 async function dbCreate(ctx: PluginContext): Promise<number | void> {
@@ -108,6 +144,14 @@ async function dbCreate(ctx: PluginContext): Promise<number | void> {
   if (!name) {
     ctx.err("Usage: nexus cpanel db:create --name mydb")
     return 1
+  }
+  const ok = await ctx.confirm({
+    title: `Create database '${name}' on ${typeof ctx.flags.host === "string" ? ctx.flags.host : "your cPanel host"}?`,
+    detail: "This performs a remote write on your hosting account",
+  })
+  if (!ok) {
+    ctx.out("Cancelled")
+    return 0
   }
   const body = await uapi(ctx, "Mysql", "create_database", { name })
   if (!body) return 1
@@ -153,6 +197,14 @@ async function domainAddSubdomain(ctx: PluginContext): Promise<number | void> {
     ctx.err("Usage: nexus cpanel domain:add-subdomain --name blog --domain example.com")
     return 1
   }
+  const ok = await ctx.confirm({
+    title: `Add subdomain '${name}.${domain}'?`,
+    detail: "This performs a remote write on your hosting account",
+  })
+  if (!ok) {
+    ctx.out("Cancelled")
+    return 0
+  }
   const body = await uapi(ctx, "DomainInfo", "add_subdomain", { domain: name, rootdomain: domain, dir: name })
   if (!body) return 1
   ctx.out(`${Icon.success} Subdomain added: ${name}.${domain}`)
@@ -175,6 +227,14 @@ async function sslInstall(ctx: PluginContext): Promise<number | void> {
     ctx.err("Usage: nexus cpanel ssl:install --domain example.com")
     return 1
   }
+  const ok = await ctx.confirm({
+    title: `Install SSL for '${domain}'?`,
+    detail: "This triggers AutoSSL on your hosting account",
+  })
+  if (!ok) {
+    ctx.out("Cancelled")
+    return 0
+  }
   const body = await uapi(ctx, "SSL", "install_ssl_for_domain", { domain })
   if (!body) return 1
   ctx.out(`${Icon.success} SSL install triggered for ${domain}`)
@@ -187,6 +247,7 @@ const plugin: NexusPlugin = {
   tags: ["hosting", "database", "domain", "ssl"],
   commands: [
     { name: "connect", describe: "connect to a cPanel host using an API token (never a password)", usage: "nexus cpanel connect --host <host> --user <user>", run: connect },
+    { name: "disconnect", describe: "remove the stored cPanel connection and token", usage: "nexus cpanel disconnect", run: disconnect },
     { name: "db:create", describe: "create a MySQL database via UAPI", usage: "nexus cpanel db:create --name mydb", run: dbCreate },
     { name: "db:list", describe: "list databases", usage: "nexus cpanel db:list", run: dbList },
     { name: "db:delete", describe: "delete a database (--confirm required)", usage: "nexus cpanel db:delete --name old_db --confirm", run: dbDelete },

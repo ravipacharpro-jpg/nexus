@@ -1,6 +1,7 @@
 import path from "path"
 import os from "os"
 import { dim, Icon } from "../core/style"
+import { getSecret, setSecret, deleteSecret } from "../core/secret-store"
 import type { NexusPlugin, PluginContext } from "../core/types"
 
 interface IntegrationSpec {
@@ -11,6 +12,8 @@ interface IntegrationSpec {
   scope: string
   clientIdEnv: string
   docs: string
+  /** Only providers with a fully implemented flow are connectable. */
+  implemented: boolean
 }
 
 const INTEGRATIONS: IntegrationSpec[] = [
@@ -21,6 +24,7 @@ const INTEGRATIONS: IntegrationSpec[] = [
     scope: "repo read:org",
     clientIdEnv: "NEXUS_GITHUB_CLIENT_ID",
     docs: "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow",
+    implemented: true,
   },
   {
     id: "google",
@@ -29,6 +33,7 @@ const INTEGRATIONS: IntegrationSpec[] = [
     scope: "https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/gmail.readonly",
     clientIdEnv: "NEXUS_GOOGLE_CLIENT_ID",
     docs: "https://developers.google.com/identity/protocols/oauth2",
+    implemented: false,
   },
   {
     id: "openai",
@@ -37,6 +42,7 @@ const INTEGRATIONS: IntegrationSpec[] = [
     scope: "openid profile",
     clientIdEnv: "NEXUS_OPENAI_CLIENT_ID",
     docs: "https://platform.openai.com/docs",
+    implemented: false,
   },
   {
     id: "stripe",
@@ -45,11 +51,16 @@ const INTEGRATIONS: IntegrationSpec[] = [
     scope: "read_only",
     clientIdEnv: "NEXUS_STRIPE_CLIENT_ID",
     docs: "https://stripe.com/docs/connect/oauth-reference",
+    implemented: false,
   },
 ]
 
 function storePath(): string {
   return path.join(os.homedir(), ".nexus", "integrations.json")
+}
+
+function tokenSecret(id: string): string {
+  return `integration.${id.replace(/[^a-z0-9._-]+/gi, "-")}.token`
 }
 
 async function loadStore(): Promise<Record<string, { connectedAt: number; mode: string }>> {
@@ -73,6 +84,12 @@ async function connect(ctx: PluginContext): Promise<number | void> {
     ctx.err(`${Icon.lock} OAuth client ID missing`)
     ctx.out(`Set ${Style.TEXT_HIGHLIGHT}${spec.clientIdEnv}${Style.TEXT_NORMAL} to your registered OAuth app's client_id.`)
     ctx.out(dim(`Register your own OAuth app (never share secrets) — see ${spec.docs}`))
+    return 1
+  }
+
+  if (!spec.implemented) {
+    ctx.err(`${spec.name} OAuth flow is not implemented yet — listed for transparency only.`)
+    ctx.out(dim(`Track progress on https://github.com/itzgeniusboy/nexus/issues`))
     return 1
   }
 
@@ -115,12 +132,11 @@ async function connect(ctx: PluginContext): Promise<number | void> {
       const token = (await tokenResponse.json()) as { access_token?: string; error?: string }
 
       if (token.access_token) {
-        const keyFile = path.join(os.homedir(), ".nexus", `integration-${spec.id}.token`)
-        await Bun.write(keyFile, token.access_token, { mode: 0o600 })
+        setSecret(tokenSecret(spec.id), token.access_token)
         const store = await loadStore()
         store[spec.id] = { connectedAt: Date.now(), mode: "oauth-device" }
         await Bun.write(storePath(), JSON.stringify(store, null, 2))
-        ctx.out(`${Icon.success} ${spec.name} connected — token stored locally (${keyFile})`)
+        ctx.out(`${Icon.success} ${spec.name} connected — token encrypted at rest`)
         return 0
       }
       if (token.error === "authorization_pending") continue
@@ -135,7 +151,8 @@ async function connect(ctx: PluginContext): Promise<number | void> {
     return 1
   }
 
-  ctx.err(`${spec.name} device flow not wired yet — open the OAuth consent URL manually and paste the resulting token via 'nexus api add'`)
+  ctx.err(`${spec.name} device flow not implemented yet`)
+  return 1
 }
 
 async function listIntegrations(ctx: PluginContext): Promise<number | void> {
@@ -143,7 +160,11 @@ async function listIntegrations(ctx: PluginContext): Promise<number | void> {
   ctx.out(`${Icon.info} Integrations:`)
   for (const spec of INTEGRATIONS) {
     const entry = store[spec.id]
-    const status = entry ? `${Icon.success} ${dim(new Date(entry.connectedAt).toLocaleString())}` : dim("not connected")
+    const status = entry
+      ? `${Icon.success} ${dim(new Date(entry.connectedAt).toLocaleString())}`
+      : spec.implemented
+        ? dim("not connected")
+        : dim("coming soon")
     ctx.out(`  ${spec.id.padEnd(10)} ${status}`)
   }
 }
@@ -158,6 +179,7 @@ async function disconnect(ctx: PluginContext): Promise<number | void> {
   const store = await loadStore()
   delete store[spec.id]
   await Bun.write(storePath(), JSON.stringify(store, null, 2))
+  deleteSecret(tokenSecret(spec.id))
   const tokenFile = path.join(os.homedir(), ".nexus", `integration-${spec.id}.token`)
   if (await Bun.file(tokenFile).exists()) {
     await import("fs/promises").then((fs) => fs.unlink(tokenFile))

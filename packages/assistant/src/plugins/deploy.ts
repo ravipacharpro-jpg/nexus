@@ -1,36 +1,52 @@
 import os from "os"
 import path from "path"
 import { Style, Icon } from "../core/style"
+import { getSecret, setSecret } from "../core/secret-store"
+import type { NexusPlugin, PluginContext } from "../core/types"
 
 const EOL = "\n"
 const CLOUD_TOKENS = path.join(os.homedir(), ".nexus", "cloud-tokens.json")
 
-async function saveCloudToken(provider: string, token: string): Promise<void> {
-  const file = Bun.file(CLOUD_TOKENS)
-  const data = (await file.exists()) ? await file.json() : {}
-  data[provider] = token
-  await Bun.write(CLOUD_TOKENS, JSON.stringify(data, null, 2))
-  await import("fs/promises").then((fs) => fs.chmod(CLOUD_TOKENS, 0o600))
+function secretName(provider: string): string {
+  return `cloud.${provider.replace(/[^a-z0-9._-]+/gi, "-")}.token`
 }
 
-async function getCloudToken(ctx: PluginContext, provider: string): Promise<string | undefined> {
+async function saveCloudToken(provider: string, token: string): Promise<void> {
+  setSecret(secretName(provider), token)
+}
+
+async function getCloudToken(provider: string): Promise<string | undefined> {
+  const stored = getSecret(secretName(provider))
+  if (stored) return stored
   const file = Bun.file(CLOUD_TOKENS)
   if (!(await file.exists())) return undefined
   const data = await file.json()
-  return data[provider]
+  const legacy = typeof data[provider] === "string" ? (data[provider] as string) : undefined
+  if (!legacy) return undefined
+  // Migrate plaintext token to encrypted storage and scrub the legacy file.
+  setSecret(secretName(provider), legacy)
+  const remaining = Object.fromEntries(Object.entries(data).filter(([key]) => key !== provider))
+  const fs = await import("fs/promises")
+  if (Object.keys(remaining).length === 0) await fs.rm(CLOUD_TOKENS, { force: true })
+  else {
+    await Bun.write(CLOUD_TOKENS, JSON.stringify(remaining, null, 2))
+    await fs.chmod(CLOUD_TOKENS, 0o600)
+  }
+  return legacy
 }
 
 async function ensureCloudToken(ctx: PluginContext, provider: string): Promise<string | undefined> {
   let token = typeof ctx.flags.token === "string" ? ctx.flags.token : undefined
   token = token ?? process.env[`NEXUS_${provider.toUpperCase()}_TOKEN`]
-  token = token ?? (await getCloudToken(provider))
+  const saved = await getCloudToken(provider)
+  token = token ?? saved
   if (!token) {
     ctx.err(`No ${provider} token saved.`)
-    ctx.out(`${Style.TEXT_DIM}Save once: nexus api-style vault ya direct:${Style.TEXT_NORMAL}`)
+    ctx.out(`${Style.TEXT_DIM}Save once with:${Style.TEXT_NORMAL}`)
     ctx.out(`  ${Style.TEXT_HIGHLIGHT}nexus deploy cloud ${provider} --token <your-api-token>${Style.TEXT_NORMAL}`)
     return undefined
   }
-  await saveCloudToken(provider, token)
+  if (token !== saved) await saveCloudToken(provider, token)
   return token
 }
 
@@ -40,7 +56,6 @@ async function writeArtifact(ctx: PluginContext, name: string, content: string):
   await Bun.write(out, content)
   return out
 }
-import type { NexusPlugin, PluginContext } from "../core/types"
 
 async function sshDeploy(ctx: PluginContext): Promise<number | void> {
   const host = typeof ctx.flags.host === "string" ? ctx.flags.host : undefined
@@ -150,6 +165,15 @@ async function deployFly(ctx: PluginContext): Promise<number | void> {
 
   let flyctl = Bun.which("flyctl") ?? Bun.which("fly")
   if (!flyctl && ctx.flags.fix === true) {
+    const okInstall = await ctx.confirm({
+      title: "Install flyctl via remote script?",
+      detail: "Runs: curl -fsSL https://fly.io/install.sh | sh — review the script at fly.io/install.sh before allowing",
+      danger: true,
+    })
+    if (!okInstall) {
+      ctx.out("Install cancelled")
+      return 0
+    }
     ctx.out(`${Icon.rocket} Installing flyctl...`)
     Bun.spawnSync(["sh", "-c", "curl -fsSL https://fly.io/install.sh | sh"], { stdout: "ignore", stderr: "ignore" })
     process.env.PATH = `${process.env.HOME}/.fly/bin:${process.env.PATH}`
