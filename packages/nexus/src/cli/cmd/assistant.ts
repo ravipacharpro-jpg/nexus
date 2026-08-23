@@ -38,8 +38,8 @@ const FLAG_OPTIONS = [
   ["task", { type: "string", describe: "task description" }],
 ] as const
 
-export const NexusCommand = cmd({
-  command: "nexus [input..]",
+export const AssistantCommand = cmd({
+  command: "assistant [input..]",
   describe: "NEXUS assistant — natural language tasks + on-demand plugins",
   builder: (yargs) => {
     let builder = yargs
