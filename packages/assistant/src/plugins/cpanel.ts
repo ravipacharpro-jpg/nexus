@@ -3,6 +3,8 @@ import { Style, Icon, dim } from "../core/style"
 import { getSecret, setSecret, deleteSecret } from "../core/secret-store"
 import type { NexusPlugin, PluginContext } from "../core/types"
 
+const EOL = "\n"
+
 interface UapiResponse {
   errors?: string[]
   status?: number
@@ -93,6 +95,56 @@ async function uapi(
   return body
 }
 
+async function readSecretLine(): Promise<string> {
+  const stdin = process.stdin
+  let raw = false
+  try {
+    if (typeof (stdin as { setRawMode?: (mode: boolean) => void }).setRawMode === "function") {
+      ;(stdin as { setRawMode: (mode: boolean) => void }).setRawMode(true)
+      raw = true
+    }
+  } catch {}
+  process.stderr.write("")
+
+  const token = await new Promise<string>((resolve) => {
+    let input = ""
+    const onData = (chunk: Buffer | string) => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8")
+      for (const ch of text) {
+        if (ch === "\r" || ch === "\n") {
+          cleanup()
+          resolve(input)
+          return
+        }
+        if ((ch === "\x7f" || ch === "\b") && input.length > 0) {
+          input = input.slice(0, -1)
+          continue
+        }
+        if (ch >= " " && ch !== "\x03") input += ch
+        if (ch === "\x03") {
+          cleanup()
+          process.exit(130)
+        }
+      }
+    }
+    const cleanup = () => {
+      stdin.pause()
+      stdin.removeListener("data", onData)
+    }
+    stdin.setEncoding("utf8")
+    stdin.resume()
+    stdin.on("data", onData)
+  })
+
+  if (raw) {
+    try {
+      ;(stdin as { setRawMode: (mode: boolean) => void }).setRawMode(false)
+    } catch {}
+  }
+  process.stderr.write(EOL)
+  return token.trim()
+}
+
 async function connect(ctx: PluginContext): Promise<number | void> {
   const hostFlag = typeof ctx.flags.host === "string" ? ctx.flags.host : undefined
   const userFlag = typeof ctx.flags.user === "string" ? ctx.flags.user : undefined
@@ -105,17 +157,9 @@ async function connect(ctx: PluginContext): Promise<number | void> {
   ctx.out(`${Icon.lock} Connect to ${Style.TEXT_HIGHLIGHT_BOLD}${hostFlag}${Style.TEXT_NORMAL}`)
   ctx.out(dim("Create an API token in cPanel: Manage Account → Manage API Tokens"))
   ctx.out(dim("NEXUS NEVER asks for your cPanel password."))
-  process.stderr.write(`${Style.TEXT_HIGHLIGHT_BOLD}Paste API token: ${Style.TEXT_NORMAL}`)
+  process.stderr.write(`${Style.TEXT_HIGHLIGHT_BOLD}Paste API token (input hidden): ${Style.TEXT_NORMAL}`)
 
-  const token = await new Promise<string>((resolve) => {
-    let input = ""
-    process.stdin.setEncoding("utf8")
-    process.stdin.resume()
-    process.stdin.once("data", (chunk: string) => {
-      input = chunk.trim()
-      resolve(input)
-    })
-  })
+  const token = await readSecretLine()
 
   if (!token) {
     ctx.err("No token entered — cancelled")

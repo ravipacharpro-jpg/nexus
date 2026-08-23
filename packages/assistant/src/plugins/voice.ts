@@ -1,6 +1,7 @@
 import { Style, Icon } from "../core/style"
 import type { NexusPlugin, PluginContext } from "../core/types"
 import { Orchestrator } from "../core/orchestrator"
+import { redactSensitive, containsSensitive } from "../core/redact"
 
 async function listen(ctx: PluginContext): Promise<number | void> {
   if (!process.env.TERMUX_VERSION && !process.env.PREFIX?.includes("com.termux")) {
@@ -19,7 +20,11 @@ async function listen(ctx: PluginContext): Promise<number | void> {
       return 0
     }
 
-    const code = await orchestrator.process(line, ctx.cwd, ctx.llm)
+    const safeLine = redactSensitive(line)
+    if (containsSensitive(line)) {
+      ctx.err(`${Icon.lock} Sensitive content detected and redacted before routing.`)
+    }
+    const code = await orchestrator.process(safeLine, ctx.cwd, ctx.llm)
     if (code !== 0) continue
   }
 }
@@ -50,7 +55,6 @@ async function oneShot(ctx: PluginContext): Promise<number | void> {
     const proc = Bun.spawn(["termux-speech-to-text"], { stdout: "pipe", stderr: "inherit" })
     await proc.exited
     command = (await new Response(proc.stdout).text()).trim()
-    ctx.out(`${Icon.brain} Heard: ${command}`)
   }
 
   if (!command) {
@@ -58,8 +62,14 @@ async function oneShot(ctx: PluginContext): Promise<number | void> {
     return 1
   }
 
+  const safeCommand = redactSensitive(command)
+  if (containsSensitive(command)) {
+    ctx.err(`${Icon.lock} Sensitive content redacted — transcript safe to display/route.`)
+  }
+  ctx.out(`${Icon.brain} Command: ${safeCommand}`)
+
   const confirm = await ctx.confirm({
-    title: `Execute: ${command}?`,
+    title: `Execute: ${safeCommand}?`,
   })
   if (!confirm) {
     ctx.out("Cancelled")
@@ -67,7 +77,7 @@ async function oneShot(ctx: PluginContext): Promise<number | void> {
   }
 
   const orchestrator = new Orchestrator()
-  return orchestrator.process(command, ctx.cwd, ctx.llm)
+  return orchestrator.process(safeCommand, ctx.cwd, ctx.llm)
 }
 
 const plugin: NexusPlugin = {

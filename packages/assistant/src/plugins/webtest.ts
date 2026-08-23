@@ -317,7 +317,7 @@ async function visual(ctx: PluginContext): Promise<number | void> {
   return runVisual(ctx, url)
 }
 
-interface RecordedStep {
+export interface RecordedStep {
   action: "goto" | "click" | "fill"
   selector?: string
   value?: string
@@ -353,11 +353,11 @@ const RECORDER_INIT_SCRIPT = `
 })()
 `
 
-function escapeSpecString(value: string): string {
+export function escapeSpecString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
 }
 
-function generateSpec(url: string, steps: RecordedStep[]): string {
+export function generateSpec(url: string, steps: RecordedStep[]): string {
   const lines = [
     "import { test, expect } from '@playwright/test'",
     "",
