@@ -8,15 +8,17 @@ import { Spinner } from "@nexus-ai/ui/spinner"
 import { showToast } from "@/utils/toast"
 import { Tooltip, TooltipKeybind } from "@nexus-ai/ui/tooltip"
 import { getFilename } from "@nexus-ai/core/util/path"
-import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Portal } from "solid-js/web"
 import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
+import { useLocal } from "@/context/local"
 import { usePlatform } from "@/context/platform"
 import { useServer } from "@/context/server"
+import { useServerSDK } from "@/context/server-sdk"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
@@ -33,6 +35,9 @@ import { KeybindV2 } from "@nexus-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@nexus-ai/ui/v2/tooltip-v2"
 import { reviewTooltipKeybind } from "../command-tooltip-keybind"
 import { useTitlebarRightMount } from "../titlebar"
+import { deriveSessionActivity, type SessionActivity } from "./session-activity"
+import { modelAvailability } from "../model-availability"
+import { sessionRouteStatus, type SessionRouteStatus } from "./session-route-status"
 
 const OPEN_APPS = [
   "vscode",
@@ -145,6 +150,8 @@ export function SessionHeader() {
   const language = useLanguage()
   const settings = useSettings()
   const sync = useSync()
+  const local = useLocal()
+  const serverSDK = useServerSDK()
   const terminal = useTerminal()
   const { params, view } = useSessionLayout()
 
@@ -234,9 +241,78 @@ export function SessionHeader() {
   const tint = createMemo(() =>
     messageAgentColor(params.id ? sync().data.message[params.id] : undefined, sync().data.agent),
   )
+  const [completedSession, setCompletedSession] = createSignal<string>()
+  let previousSessionStatus: "busy" | "retry" | "idle" | undefined
+  let completedTimer: number | undefined
+  createEffect(() => {
+    const sessionID = params.id
+    const next = sessionID ? (sync().data.session_status[sessionID]?.type ?? "idle") : "idle"
+    if (!sessionID) {
+      previousSessionStatus = undefined
+      setCompletedSession(undefined)
+      return
+    }
+    if (next === "busy" || next === "retry") {
+      if (completedTimer !== undefined) window.clearTimeout(completedTimer)
+      completedTimer = undefined
+      setCompletedSession(undefined)
+    } else if ((previousSessionStatus === "busy" || previousSessionStatus === "retry") && next === "idle") {
+      setCompletedSession(sessionID)
+      if (completedTimer !== undefined) window.clearTimeout(completedTimer)
+      completedTimer = window.setTimeout(() => {
+        completedTimer = undefined
+        setCompletedSession((current) => (current === sessionID ? undefined : current))
+      }, 3000)
+    }
+    previousSessionStatus = next
+  })
+  onCleanup(() => {
+    if (completedTimer !== undefined) window.clearTimeout(completedTimer)
+  })
+  const activity = createMemo(() => {
+    const sessionID = params.id
+    if (!sessionID) return
+    const messages = sync().data.message[sessionID] ?? []
+    const latestAssistant = messages.findLast((message) => message.role === "assistant")
+    return deriveSessionActivity({
+      status: sync().data.session_status[sessionID],
+      parts: latestAssistant ? (sync().data.part[latestAssistant.id] ?? []) : [],
+      error: latestAssistant?.error,
+      waiting:
+        (sync().data.permission[sessionID]?.length ?? 0) > 0 || (sync().data.question[sessionID]?.length ?? 0) > 0,
+      completed: completedSession() === sessionID,
+    })
+  })
+  const activityRoute = createMemo(() => {
+    const sessionID = params.id
+    if (!sessionID) return
+    const message = (sync().data.message[sessionID] ?? []).findLast((item) => item.role === "assistant")
+    if (!message?.modelID) return
+    return message.providerID ? `${message.providerID} · ${message.modelID}` : message.modelID
+  })
+  const [activeModels] = createResource(() => serverSDK().client.providerVault.models.active())
+  const [vaultKeys] = createResource(() => serverSDK().client.providerVault.keys.list())
+  const activityRouteStatus = createMemo<SessionRouteStatus | undefined>(() => {
+    const sessionID = params.id
+    if (!sessionID) return
+    const message = (sync().data.message[sessionID] ?? []).findLast((item) => item.role === "assistant")
+    if (!message?.modelID) return
+    const availability = message.providerID
+      ? modelAvailability({
+          provider: message.providerID,
+          model: message.modelID,
+          activeModels: activeModels()?.models ?? [],
+          keys: vaultKeys()?.providers ?? [],
+        })
+      : undefined
+    return sessionRouteStatus({ auto: local.model.isAuto(), availability })
+  })
   const v2ActionsState = createMemo<SessionHeaderV2ActionsState>(() => ({
     statusVisible: status(),
     statusLabel: language.t("status.popover.trigger"),
+    activity: activity(),
+    route: activityRoute(),
+    routeStatus: activityRouteStatus(),
     reviewLabel: language.t("command.review.toggle"),
     reviewKeybind: reviewTooltipKeybind(command),
     reviewVisible: isDesktop(),
@@ -440,6 +516,7 @@ export function SessionHeader() {
                     </div>
                   </Show>
                   <div class="flex items-center gap-1">
+                    <SessionActivityPill activity={activity()} route={activityRoute()} routeStatus={activityRouteStatus()} />
                     <Show when={status()}>
                       <Tooltip placement="bottom" value={language.t("status.popover.trigger")}>
                         <StatusPopover />
@@ -519,6 +596,9 @@ export function SessionHeader() {
 type SessionHeaderV2ActionsState = {
   statusVisible: boolean
   statusLabel: string
+  activity: SessionActivity | undefined
+  route: string | undefined
+  routeStatus: SessionRouteStatus | undefined
   reviewLabel: string
   reviewKeybind: string[]
   reviewVisible: boolean
@@ -531,6 +611,7 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
 
   return (
     <div class="flex items-center gap-2">
+      <SessionActivityPill activity={props.state.activity} route={props.state.route} routeStatus={props.state.routeStatus} />
       <Show when={props.state.statusVisible}>
         <Tooltip placement="bottom" value={props.state.statusLabel}>
           <StatusPopoverV2 />
@@ -564,5 +645,48 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
         </TooltipV2>
       </Show>
     </div>
+  )
+}
+
+function SessionActivityPill(props: { activity: SessionActivity | undefined; route: string | undefined; routeStatus: SessionRouteStatus | undefined }) {
+  const tone = () => {
+    if (props.activity?.tone === "error") return "text-red-400"
+    if (props.activity?.tone === "warning") return "text-amber-300"
+    if (props.activity?.tone === "active") return "text-cyan-300"
+    return "text-v2-text-text-faint"
+  }
+
+  return (
+    <Show when={props.activity}>
+      {(activity) => (
+        <div
+          data-component="session-activity"
+          aria-live="polite"
+          class="hidden max-w-[300px] items-center gap-1.5 rounded-md border border-v2-border-border-weak bg-v2-background-bg-weak px-2 py-1 text-[12px] leading-none md:flex"
+          title={props.route ? `${activity().label} · ${props.route}` : activity().label}
+        >
+          <span
+            aria-hidden="true"
+            class={`inline-flex size-3 shrink-0 items-center justify-center font-medium ${tone()} ${
+              activity().tone === "active" ? "motion-safe:animate-pulse" : ""
+            }`}
+          >
+            {activity().glyph}
+          </span>
+          <span class="shrink-0 text-v2-text-text-base">{activity().label}</span>
+          <Show when={props.routeStatus}>
+            {(status) => (
+              <span class="shrink-0 text-v2-text-text-faint" title={status().tooltip}>
+                · {status().modeLabel}
+                <Show when={status().availability}> · {status().availability?.label}</Show>
+              </span>
+            )}
+          </Show>
+          <Show when={props.route}>
+            <span class="min-w-0 truncate text-v2-text-text-faint">· {props.route}</span>
+          </Show>
+        </div>
+      )}
+    </Show>
   )
 }

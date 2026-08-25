@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { UserLiaison } from "@nexus/termux-core"
-import { isBareUserTask, runBareUserTask } from "./quick-liaison"
+import { isBareUserTask, routeAssistantPluginArgs, runBareUserTask } from "./quick-liaison"
 
 const GIB = 1024 * 1024 * 1024
 
@@ -16,6 +16,19 @@ test("routes plain task input through the immediate liaison path", () => {
   assert.equal(isBareUserTask(["big task"]), true)
   assert.equal(isBareUserTask(["setup", "termux"]), false)
   assert.equal(isBareUserTask(["--help"]), false)
+})
+
+test("routes documented Assistant plugin aliases before bare-task handling", () => {
+  assert.deepEqual(routeAssistantPluginArgs(["voice", "say"]), ["assistant", "voice", "say"])
+  assert.deepEqual(routeAssistantPluginArgs(["webtest", "run", "https://example.test"]), ["assistant", "webtest", "run", "https://example.test"])
+  assert.deepEqual(routeAssistantPluginArgs(["assistant", "voice", "say"]), ["assistant", "voice", "say"])
+  assert.equal(isBareUserTask(routeAssistantPluginArgs(["voice", "say"])), false)
+  assert.equal(isBareUserTask(routeAssistantPluginArgs(["custom task"])), true)
+})
+
+test("keeps the local intent inspection command out of bare-task interception", () => {
+  assert.equal(isBareUserTask(["intent", "workspace", "list"]), false)
+  assert.deepEqual(routeAssistantPluginArgs(["intent", "workspace"]), ["intent", "workspace"])
 })
 
 test("bare task acknowledgements expose simulated desktop High and Termux Low capacity plans", async () => {
@@ -40,7 +53,7 @@ test("bare task acknowledgements expose simulated desktop High and Termux Low ca
   }
 })
 
-test("bare task failures exit non-zero with a clean message instead of leaking internals", async () => {
+test("bare task failures exit nonzero with a clean error instead of leaking bundled internals", async () => {
   const failingLiaison = {
     handleUserMessage: async () => {
       throw new Error("EROFS: read-only file system, mkdir '/tmp'")
@@ -48,19 +61,13 @@ test("bare task failures exit non-zero with a clean message instead of leaking i
   } as unknown as UserLiaison
   const previousExitCode = process.exitCode
   const errors: string[] = []
-  const originalStderrWrite = process.stderr.write.bind(process.stderr)
-  process.stderr.write = ((text: string) => {
-    errors.push(String(text))
-    return true
-  }) as typeof process.stderr.write
   try {
-    await runBareUserTask(["big task"], { liaison: failingLiaison })
+    process.exitCode = undefined
+    await runBareUserTask(["big task"], { liaison: failingLiaison, writeError: (text) => errors.push(text) })
     assert.equal(process.exitCode, 1)
     assert.match(errors.join(""), /Task failed: EROFS/)
     assert.doesNotMatch(errors.join(""), /async function/)
   } finally {
-    process.stderr.write = originalStderrWrite
-    if (previousExitCode === undefined) process.exitCode = 0
-    else process.exitCode = previousExitCode
+    process.exitCode = previousExitCode
   }
 })

@@ -77,6 +77,7 @@ export function routeModel(input: string, options: { includeLocal?: boolean } = 
     const model = requested.slice(slash + 1)
     if (provider === "ollama" || providerConfigured(provider)) return [{ alias: requested, provider, model, reason: "explicit provider/model" }]
   }
+  if (options.includeLocal === false) return []
   return [{ alias: requested, provider: "ollama", model: requested || "llama3", reason: "local/default route" }]
 }
 
@@ -99,7 +100,22 @@ export function providerModelForAlias(aliasInput: string, provider: string): str
 export function vaultProviderOrder(): string[] {
   const vault = loadApiVault()
   return Object.keys(vault.providers).sort((a, b) => {
-    const priority = ["deepseek", "groq", "openrouter", "gemini", "cerebras", "openai"]
+    const priority = [
+      "anthropic",
+      "openai",
+      "deepseek",
+      "groq",
+      "openrouter",
+      "gemini",
+      "xai",
+      "mistral",
+      "cerebras",
+      "togetherai",
+      "fireworks",
+      "moonshotai",
+      "cohere",
+      "perplexity",
+    ]
     return (priority.indexOf(a) === -1 ? 99 : priority.indexOf(a)) - (priority.indexOf(b) === -1 ? 99 : priority.indexOf(b))
   })
 }

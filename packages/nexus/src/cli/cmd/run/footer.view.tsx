@@ -14,6 +14,7 @@ import { registerNexusSpinner } from "@nexus-ai/tui/component/register-spinner"
 import { createColors, createFrames } from "@nexus-ai/tui/ui/spinner"
 import {
   RUN_SUBAGENT_PANEL_ROWS,
+  RunApiOnboardingBody,
   RunCommandMenuBody,
   RunModelSelectBody,
   RunQueuedPromptSelectBody,
@@ -55,8 +56,12 @@ import type {
 } from "./types"
 import type { RunTheme } from "./theme"
 import { modelInfo } from "./variant.shared"
+import { deriveFooterActivity } from "./footer.activity"
+import { footerMotionEnabled } from "./footer.motion"
 
 registerNexusSpinner()
+
+const footerMotion = footerMotionEnabled()
 
 const EMPTY_BORDER = {
   topLeft: "",
@@ -141,6 +146,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   const commanding = createMemo(() => active().type === "prompt" && route().type === "command")
   const skilling = createMemo(() => active().type === "prompt" && route().type === "skill")
   const modeling = createMemo(() => active().type === "prompt" && route().type === "model")
+  const apiOnboarding = createMemo(() => active().type === "prompt" && route().type === "api")
   const varianting = createMemo(() => active().type === "prompt" && route().type === "variant")
   const panel = createMemo(
     () =>
@@ -151,6 +157,7 @@ export function RunFooterView(props: RunFooterViewProps) {
       commanding() ||
       skilling() ||
       modeling() ||
+      apiOnboarding() ||
       varianting(),
   )
   const selected = createMemo(() => {
@@ -242,6 +249,25 @@ export function RunFooterView(props: RunFooterViewProps) {
   const busy = createMemo(() => props.state().phase === "running")
   const armed = createMemo(() => props.state().interrupt > 0)
   const exiting = createMemo(() => props.state().exit > 0)
+  const [completed, setCompleted] = createSignal(false)
+  let wasBusy = false
+  let completedTimer: ReturnType<typeof setTimeout> | undefined
+  createEffect(() => {
+    const nowBusy = busy()
+    if (nowBusy) {
+      if (completedTimer) clearTimeout(completedTimer)
+      completedTimer = undefined
+      setCompleted(false)
+    } else if (wasBusy) {
+      setCompleted(true)
+      if (completedTimer) clearTimeout(completedTimer)
+      completedTimer = setTimeout(() => {
+        completedTimer = undefined
+        setCompleted(false)
+      }, 3000)
+    }
+    wasBusy = nowBusy
+  })
   const queue = createMemo(() => props.state().queue)
   const usage = createMemo(() => props.state().usage)
   const interruptLabel = createMemo(() => {
@@ -294,6 +320,11 @@ export function RunFooterView(props: RunFooterViewProps) {
 
   const openModel = () => {
     setRoute({ type: "model" })
+    props.onSubagentSelect?.(undefined)
+  }
+
+  const openApiOnboarding = () => {
+    setRoute({ type: "api" })
     props.onSubagentSelect?.(undefined)
   }
 
@@ -416,6 +447,21 @@ export function RunFooterView(props: RunFooterViewProps) {
 
     return shell() ? "Shell mode" : ""
   })
+  const activity = createMemo(() =>
+    deriveFooterActivity({
+      busy: busy(),
+      exiting: exiting(),
+      armed: armed(),
+      status: stateStatus(),
+      completed: completed(),
+    }),
+  )
+  const activityColor = createMemo(() => {
+    if (activity()?.tone === "error") return theme().error
+    if (activity()?.tone === "warning") return theme().warning
+    if (activity()?.tone === "active") return theme().highlight
+    return theme().muted
+  })
   const activityMeta = createMemo(() => {
     if (!responsive().statusline.showActivityMeta || usage().length === 0) {
       return ""
@@ -432,8 +478,7 @@ export function RunFooterView(props: RunFooterViewProps) {
     return {
       model: model().model,
       variant: props.currentVariant(),
-      provider: undefined,
-      // Prefer without provider, but keep it on the shared width policy if we add it back.
+      provider: model().provider,
     }
   })
   const statusColor = createMemo(() => {
@@ -495,6 +540,7 @@ export function RunFooterView(props: RunFooterViewProps) {
 
   onCleanup(() => {
     props.onRequestExit?.(undefined)
+    if (completedTimer) clearTimeout(completedTimer)
   })
 
   useBindings(() => ({
@@ -712,6 +758,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                             variantCycle={variantCycle()}
                             onClose={closePanel}
                             onModel={openModel}
+                            onAddApi={openApiOnboarding}
                             onEditor={() => {
                               closePanel()
                               void composer.openEditor()
@@ -761,6 +808,28 @@ export function RunFooterView(props: RunFooterViewProps) {
                             onClose={closePanel}
                             onSelect={(model) => {
                               props.onModelSelect(model)
+                              closePanel()
+                            }}
+                          />
+                        </Match>
+                        <Match when={apiOnboarding()}>
+                          <RunApiOnboardingBody
+                            theme={theme}
+                            onClose={closePanel}
+                            onSelect={(entry) => {
+                              if (entry.setup === "custom-config") {
+                                props.onStatus(
+                                  "Custom provider setup is config-only; no generic vault key form is shown in this TUI.",
+                                )
+                              } else if (entry.providerID === "cloudflare-workers-ai") {
+                                props.onStatus(
+                                  "Cloudflare setup: exit the TUI, then use `nexus api add cloudflare-workers-ai <key> --account-id <account-id>`; the API wizard masks key entry.",
+                                )
+                              } else {
+                                props.onStatus(
+                                  `API setup for ${entry.providerLabel}: exit the TUI, then use \`nexus api add ${entry.providerID} <key>\`; the API wizard masks key entry.`,
+                                )
+                              }
                               closePanel()
                             }}
                           />
@@ -839,18 +908,24 @@ export function RunFooterView(props: RunFooterViewProps) {
                   paddingRight={1}
                   backgroundColor="transparent"
                 >
-                  <Show when={busy() && !exiting()}>
+                  <Show when={activity()?.pulse && !exiting() && footerMotion}>
                     <box flexShrink={0}>
                       <spinner color={spin().color} frames={spin().frames} interval={40} />
                     </box>
                   </Show>
 
                   <text fg={statusColor()} wrapMode="none" truncate flexGrow={1} flexShrink={1}>
-                    <Show when={busy() && !exiting()} fallback={statusText()}>
-                      <Show when={interruptLabel()}>
-                        {(label) => <span style={{ fg: armed() ? statusColor() : theme().muted }}>{label()} </span>}
-                      </Show>
-                      {statusText()}
+                    <Show when={activity()} fallback={statusText()}>
+                      {(current) => (
+                        <>
+                          <span style={{ fg: activityColor(), bold: current().tone !== "muted" }}>
+                            {current().glyph} {current().label}
+                          </span>
+                          <Show when={statusText() && statusText() !== current().label}>
+                            <span style={{ fg: theme().muted }}> · {statusText()}</span>
+                          </Show>
+                        </>
+                      )}
                     </Show>
                   </text>
                 </box>

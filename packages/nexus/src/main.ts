@@ -35,10 +35,22 @@ import { ConfigCommand } from "./cli/cmd/config"
 import { DevCommand } from "./cli/cmd/dev"
 import { LiaisonCommand } from "./cli/cmd/liaison"
 import { ApiCommand } from "./cli/cmd/api"
+import { AssistantCommand } from "./cli/cmd/assistant"
 import { Heap } from "./cli/heap"
 import { ModCommand } from "./cli/cmd/mod"
 import { AssetCommand } from "./cli/cmd/asset"
 import { LuaCommand } from "./cli/cmd/lua"
+import { DoctorCommand } from "./cli/cmd/doctor"
+import { ProfileCommand } from "./cli/cmd/profile"
+import { OnboardCommand } from "./cli/cmd/onboard"
+import { InstructionsCommand } from "./cli/cmd/instructions"
+import { ArtifactCommand } from "./cli/cmd/artifact"
+import { DeviceCommand } from "./cli/cmd/device"
+import { PermissionCommand } from "./cli/cmd/permission"
+import { WorkspaceCommand } from "./cli/cmd/workspace"
+import { TranslatorCommand } from "./cli/cmd/translator"
+import { IntentCommand } from "./cli/cmd/intent"
+import { MemoryCommand } from "./cli/cmd/memory"
 
 const rawArgs = hideBin(process.argv)
 const args = rawArgs
@@ -123,6 +135,18 @@ const cli = yargs(args)
   .command(ModCommand)
   .command(AssetCommand)
   .command(LuaCommand)
+  .command(AssistantCommand)
+  .command(DoctorCommand)
+  .command(ProfileCommand)
+  .command(OnboardCommand)
+  .command(ArtifactCommand)
+  .command(DeviceCommand)
+  .command(InstructionsCommand)
+  .command(PermissionCommand)
+  .command(WorkspaceCommand)
+  .command(TranslatorCommand)
+  .command(IntentCommand)
+  .command(MemoryCommand)
   .fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||
@@ -136,6 +160,27 @@ const cli = yargs(args)
     process.exit(1)
   })
   .strict()
+
+let nexusCleanupDone = false
+function nexusCleanup(): void {
+  if (nexusCleanupDone) return
+  nexusCleanupDone = true
+  if (process.platform === "linux" && require("fs").existsSync("/data/data/com.termux/files/usr/bin/termux-wake-unlock")) {
+    try {
+      Bun.spawnSync(["termux-wake-unlock"], { stdout: "ignore", stderr: "ignore" })
+    } catch {}
+  }
+}
+
+process.on("SIGINT", () => {
+  nexusCleanup()
+  process.stderr.write(EOL + "\x1b[96m[nexus]\x1b[0m closed cleanly\n")
+  process.exit(130)
+})
+process.on("SIGTERM", () => {
+  nexusCleanup()
+  process.exit(143)
+})
 
 try {
   if (args.includes("-h") || args.includes("--help")) {
@@ -160,5 +205,6 @@ try {
   // Most notably, some docker-container-based MCP servers don't handle such signals unless
   // run using `docker run --init`.
   // Explicitly exit to avoid any hanging subprocesses.
+  nexusCleanup()
   if (!keepAliveForLiaisonTask) process.exit()
 }

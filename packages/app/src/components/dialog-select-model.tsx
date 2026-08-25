@@ -33,6 +33,7 @@ import { handleDocumentSearchKeydown } from "@/utils/search-keydown"
 import { createMenuDismissController } from "@/utils/menu-dismiss-controller"
 import { createEventListener } from "@solid-primitives/event-listener"
 import { matchesModelSearch } from "./dialog-select-model-search"
+import { modelAvailability } from "./model-availability"
 
 const isFree = (provider: string, cost: { input: number } | undefined) =>
   provider === "nexus" && (!cost || cost.input === 0)
@@ -42,6 +43,7 @@ type ModelItem = ReturnType<ModelState["list"]>[number]
 
 const modelKey = (model: ModelItem) => `${model.provider.id}:${model.id}`
 const manageKey = "action:manage"
+const autoKey = "action:auto"
 
 const sortModelGroups = (a: { category: string; items: ModelItem[] }, b: { category: string; items: ModelItem[] }) => {
   const aIndex = popularProviders.indexOf(a.category)
@@ -66,6 +68,7 @@ const ModelList: Component<{
   const language = useLanguage()
   const serverSDK = useServerSDK()
   const [activeModels] = createResource(() => serverSDK().client.providerVault.models.active())
+  const [vaultKeys] = createResource(() => serverSDK().client.providerVault.keys.list())
   const [activeOnly, setActiveOnly] = createSignal(false)
   const activeKeys = createMemo(() => {
     const keys = new Set<string>()
@@ -84,6 +87,13 @@ const ModelList: Component<{
       .filter((m) => (props.provider ? m.provider.id === props.provider : true))
       .filter((m) => !activeOnly() || activeKeys().has(`${m.provider.id}:${m.id}`)),
   )
+  const availability = (item: ModelItem) =>
+    modelAvailability({
+      provider: item.provider.id,
+      model: item.id,
+      activeModels: activeModels()?.models ?? [],
+      keys: vaultKeys()?.providers ?? [],
+    })
 
   return (
     <List
@@ -142,6 +152,9 @@ const ModelList: Component<{
       {(i) => (
         <div class="w-full flex items-center gap-x-2 text-13-regular">
           <span class="truncate">{i.name}</span>
+          <Tooltip placement="right-start" value={availability(i).detail}>
+            <Tag>{availability(i).label}</Tag>
+          </Tooltip>
           <Show when={isFree(i.provider.id, i.cost)}>
             <Tag>{language.t("model.tag.free")}</Tag>
           </Show>
@@ -283,7 +296,10 @@ export function ModelSelectorPopoverV2(props: {
       models={controller.models}
       groups={controller.groups}
       current={controller.current}
+      auto={controller.auto}
+      setAuto={controller.setAuto}
       select={controller.select}
+      availability={controller.availability}
       activeOnly={controller.activeOnly}
       setActiveOnly={controller.setActiveOnly}
       activeCount={controller.activeCount}
@@ -305,6 +321,7 @@ function createModelSelectorController(input: {
   const model = input.model ?? useLocal().model
   const serverSDK = useServerSDK()
   const [activeModels] = createResource(() => serverSDK().client.providerVault.models.active())
+  const [vaultKeys] = createResource(() => serverSDK().client.providerVault.keys.list())
   const [activeOnly, setActiveOnly] = createSignal(false)
   const activeKeys = createMemo(() => {
     const keys = new Set<string>()
@@ -345,10 +362,22 @@ function createModelSelectorController(input: {
       const value = model.current()
       return value ? modelKey(value) : undefined
     },
+    auto: () => model.isAuto(),
+    setAuto: () => {
+      model.setAuto()
+      input.onSelect()
+    },
     select: (item: ModelItem) => {
       model.set({ modelID: item.id, providerID: item.provider.id }, { recent: true })
       input.onSelect()
     },
+    availability: (item: ModelItem) =>
+      modelAvailability({
+        provider: item.provider.id,
+        model: item.id,
+        activeModels: activeModels()?.models ?? [],
+        keys: vaultKeys()?.providers ?? [],
+      }),
   }
 }
 
@@ -357,7 +386,10 @@ function ModelSelectorPopoverV2View(props: {
   models: (search: string) => ModelItem[]
   groups: (models: ModelItem[]) => { category: string; items: ModelItem[] }[]
   current: () => string | undefined
+  auto: () => boolean
+  setAuto: () => void
   select: (item: ModelItem) => void
+  availability: (item: ModelItem) => ReturnType<typeof modelAvailability>
   activeOnly: () => boolean
   setActiveOnly: (value: boolean) => void
   activeCount: () => number
@@ -372,8 +404,9 @@ function ModelSelectorPopoverV2View(props: {
 
   const models = createMemo(() => props.models(store.search))
   const groups = createMemo(() => props.groups(models()))
-  const keys = () => [...models().map(modelKey), manageKey]
+  const keys = () => [autoKey, ...models().map(modelKey), manageKey]
   const initialActive = () => {
+    if (props.auto()) return autoKey
     const selected = props.current()
     const options = keys()
     if (selected && options.includes(selected)) return selected
@@ -409,6 +442,12 @@ function ModelSelectorPopoverV2View(props: {
     const item = models().find((item) => modelKey(item) === store.active)
     if (item) {
       selectModel(item)
+      return
+    }
+    if (store.active === autoKey) {
+      dismiss.preventTriggerRestore()
+      setOpen(false)
+      dismiss.afterClose(props.setAuto)
       return
     }
     if (store.active === manageKey) manage()
@@ -512,6 +551,26 @@ function ModelSelectorPopoverV2View(props: {
             </button>
           </Show>
           <div class="h-px bg-v2-border-border-muted" />
+          <div class="flex flex-col p-0.5">
+            <MenuV2.Item
+              data-option-key={autoKey}
+              classList={{ "!bg-v2-overlay-simple-overlay-hover": store.active === autoKey || props.auto() }}
+              onMouseEnter={() => {
+                setStore("active", autoKey)
+                setTimeout(() => searchRef?.focus())
+              }}
+              onSelect={() => {
+                dismiss.preventTriggerRestore()
+                setOpen(false)
+                dismiss.afterClose(props.setAuto)
+              }}
+            >
+              <Icon name="brain" size="small" />
+              <span class="min-w-0 flex-1 truncate leading-5">Auto Model</span>
+              <TagV2 class="shrink-0">Recommended</TagV2>
+            </MenuV2.Item>
+          </div>
+          <div class="h-px bg-v2-border-border-muted" />
           <ScrollView data-slot="model-selector-scroll" class="max-h-[220px] min-h-0">
             <div class="flex flex-col p-0.5 pt-0">
               <Show
@@ -558,6 +617,9 @@ function ModelSelectorPopoverV2View(props: {
                                 onSelect={() => selectModel(item)}
                               >
                                 <span class="min-w-0 truncate leading-5">{item.name}</span>
+                                <TooltipV2 placement="right-start" gutter={6} value={props.availability(item).detail}>
+                                  <TagV2 class="shrink-0">{props.availability(item).label}</TagV2>
+                                </TooltipV2>
                                 <Show when={isFree(item.provider.id, item.cost)}>
                                   <TagV2 class="shrink-0">{language.t("model.tag.free")}</TagV2>
                                 </Show>
@@ -623,6 +685,16 @@ export const DialogSelectModel: Component<{ provider?: string; model?: ModelStat
         </Button>
       }
     >
+      <Button
+        variant="ghost"
+        class="mx-3 mt-3 text-text-base self-start"
+        onClick={() => {
+          ;(props.model ?? local.model).setAuto()
+          dialog.close()
+        }}
+      >
+        Auto Model (recommended)
+      </Button>
       <ModelList provider={props.provider} model={props.model} onSelect={() => dialog.close()} />
       <Button variant="ghost" class="ml-3 mt-5 mb-6 text-text-base self-start" onClick={manage}>
         {language.t("dialog.model.manage")}
