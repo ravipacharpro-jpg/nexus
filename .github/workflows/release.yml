@@ -67,8 +67,6 @@ jobs:
           path: dist
 
       - name: Create GitHub Release
-        permissions:
-          contents: write
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
