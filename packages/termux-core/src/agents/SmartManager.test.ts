@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -41,6 +41,25 @@ test("detects a desktop high plan with twelve total active slots", () => {
   assert.equal(formatDeviceMode(plan), "Device: PC (16GB) → HIGH mode")
 })
 
+test("an explicit Fast task profile caps capacity without changing the default device tier", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nexus-task-profile-"))
+  const profilePath = join(root, "task-profile.json")
+  const previousProfilePath = process.env.NEXUS_TASK_PROFILE_PATH
+  process.env.NEXUS_TASK_PROFILE_PATH = profilePath
+  try {
+    await writeFile(profilePath, JSON.stringify({ version: 1, profile: "fast" }), "utf8")
+    const plan = detectCapacity({ isTermux: false, totalMemoryBytes: 16 * GIB, processMemoryBytes: 0, meminfo: meminfo(16, 14) })
+    assert.deepEqual(
+      { maxParallel: plan.maxParallel, leadCount: plan.leadCount, workerTaskCount: plan.workerTaskCount },
+      { maxParallel: 2, leadCount: 1, workerTaskCount: 1 },
+    )
+  } finally {
+    if (previousProfilePath === undefined) delete process.env.NEXUS_TASK_PROFILE_PATH
+    else process.env.NEXUS_TASK_PROFILE_PATH = previousProfilePath
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("DualWorkerPool accounts for every active slot and never exceeds its cap", async () => {
   const pool = new DualWorkerPool(3)
   let release: () => void = () => undefined
@@ -69,6 +88,32 @@ test("persistent task records survive a new queue instance", async () => {
     const raw = JSON.parse(await readFile(path, "utf8")) as { version: number }
     assert.equal(raw.version, 1)
   } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("user task controls persist across a fresh liaison instance and wait for a safe checkpoint", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nexus-task-control-"))
+  const queuePath = join(root, "queue.json")
+  const previousPath = process.env.NEXUS_QUEUE_PATH
+  process.env.NEXUS_QUEUE_PATH = queuePath
+  try {
+    const manager = new SmartManager(new PersistentTaskQueue(queuePath))
+    await manager.accept("task-control", "inspect the repository", root)
+    await manager.update("task-control", "running")
+
+    const liaison = new UserLiaison({ notify: false })
+    const update = await liaison.handleUserMessage("update only inspect the API module", "test", root)
+    assert.match(update, /next safe checkpoint/i)
+    const paused = await liaison.handleUserMessage("pause", "test", root)
+    assert.match(paused, /Pause requested/i)
+
+    const persisted = await new PersistentTaskQueue(queuePath).list()
+    assert.equal(persisted[0]?.state, "paused")
+    assert.equal(persisted[0]?.control?.action, "pause")
+  } finally {
+    if (previousPath === undefined) delete process.env.NEXUS_QUEUE_PATH
+    else process.env.NEXUS_QUEUE_PATH = previousPath
     await rm(root, { recursive: true, force: true })
   }
 })

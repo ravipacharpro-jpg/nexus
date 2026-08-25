@@ -7,6 +7,7 @@ import { detectEnvironment } from "@nexus-ai/assistant/core/adaptive"
 import { makeContext, SECURITY_RULES } from "@nexus-ai/assistant/core/security"
 import { Style, Icon } from "@nexus-ai/assistant/core/style"
 import { EOL } from "os"
+import { AgentPlatformStore } from "../../agent-platform/store"
 
 const manager = new PluginManager(detectEnvironment())
 
@@ -27,14 +28,25 @@ const FLAG_OPTIONS = [
   ["from", { type: "string", describe: "source language" }],
   ["to", { type: "string", describe: "target language" }],
   ["format", { type: "string", describe: "output format" }],
-  ["message", { type: "string", describe: "commit message" }],
+  ["message", { type: "string", alias: "m", describe: "commit message" }],
   ["browser", { type: "string", describe: "browser (chrome|edge)" }],
-  ["confirm", { type: "boolean", describe: "skip confirmation prompts" }],
+  ["confirm", { type: "boolean", describe: "explicitly approve applicable confirmation prompts for this command" }],
+  ["stage", { type: "boolean", describe: "explicitly stage reviewed local changes before a Git commit" }],
+  ["patch", { type: "boolean", describe: "show a bounded patch preview in addition to the change summary" }],
   ["force", { type: "boolean", describe: "force overwrite" }],
   ["sync", { type: "boolean", describe: "sync placeholders" }],
-  ["noVerify", { type: "boolean", describe: "skip critical review gate" }],
+  ["noVerify", { type: "boolean", describe: "legacy option; critical secret checks remain mandatory" }],
+  // yargs interprets `--no-verify` as negation of `verify` before camel-case
+  // aliases are resolved. Keep that legacy spelling parseable without allowing it
+  // to affect the unconditional critical-secret gate in Git Pro.
+  ["verify", { type: "boolean", hidden: true, describe: "legacy negation target" }],
   ["dryRun", { type: "boolean", describe: "show what would happen" }],
   ["newProfile", { type: "boolean", describe: "isolated browser profile" }],
+  ["connectExisting", { type: "boolean", describe: "attach only to a user-started loopback CDP browser" }],
+  ["authorizeTarget", { type: "boolean", describe: "confirm ownership or authorization for a browser/HTTP target" }],
+  ["allowInteraction", { type: "boolean", describe: "allow one human-confirmed non-sensitive browser interaction" }],
+  ["voiceCommand", { type: "string", describe: "one-shot voice command text" }],
+  ["learn", { type: "boolean", describe: "create a redacted learning proposal after a successful task; approval remains required" }],
   ["task", { type: "string", describe: "task description" }],
 ] as const
 
@@ -90,7 +102,8 @@ export const AssistantCommand = cmd({
 
     const pluginName = manager.available().find((name) => name === tokens[0] || name.startsWith(tokens[0]))
     if (pluginName) {
-      await dispatch(pluginName, tokens.slice(1), args)
+      const code = await dispatch(pluginName, tokens.slice(1), args)
+      if (code === 0) captureLearningProposal(tokens, args)
       return
     }
 
@@ -101,11 +114,12 @@ export const AssistantCommand = cmd({
     delete nlFlags["--"]
     delete nlFlags.$0
     const code = await orchestrator.process(tokens.join(" "), cwd, undefined, nlFlags)
+    if (code === 0) captureLearningProposal(tokens, args)
     if (code !== 0) process.exitCode = code
   },
 })
 
-async function dispatch(pluginName: string, rest: string[], args: Record<string, unknown>) {
+async function dispatch(pluginName: string, rest: string[], args: Record<string, unknown>): Promise<number> {
   const cwd = process.cwd()
   let plugin
   try {
@@ -113,7 +127,7 @@ async function dispatch(pluginName: string, rest: string[], args: Record<string,
   } catch (error) {
     process.stderr.write(`${Icon.fail} ${error instanceof Error ? error.message : String(error)}${EOL}`)
     process.exitCode = 1
-    return
+    return 1
   }
 
   const [maybeCommand, ...commandArgs] = rest
@@ -126,7 +140,7 @@ async function dispatch(pluginName: string, rest: string[], args: Record<string,
     for (const c of plugin.commands) {
       process.stderr.write(`  ${Style.TEXT_INFO}${c.name.padEnd(20)}${Style.TEXT_NORMAL}${Style.TEXT_DIM}${c.usage ?? c.describe}${Style.TEXT_NORMAL}${EOL}`)
     }
-    return
+    return 1
   }
 
   const flags: Record<string, unknown> = { ...args }
@@ -138,14 +152,38 @@ async function dispatch(pluginName: string, rest: string[], args: Record<string,
   const ctx = makeContext({
     cwd,
     env: detectEnvironment(),
-    args: commandArgs.length > 0 ? commandArgs : rest.filter((token) => !token.startsWith("-")),
+    args: commandArgs,
     flags,
     out: (message) => process.stderr.write(message + EOL),
     err: (message) => process.stderr.write(`${Style.TEXT_DANGER}${message}${Style.TEXT_NORMAL}${EOL}`),
   })
 
   const result = await command.run(ctx)
-  if (typeof result === "number" && result !== 0) process.exitCode = result
+  const code = typeof result === "number" ? result : 0
+  if (code !== 0) process.exitCode = code
+  return code
+}
+
+function captureLearningProposal(tokens: string[], args: Record<string, unknown>) {
+  if (args.learn !== true) return
+  const intent = tokens.join(" ").trim()
+  if (!intent) return
+  const store = new AgentPlatformStore()
+  try {
+    const run = store.createRun({ policy: { maxChildren: 0, maxParallel: 1, budgetClass: "low" } })
+    const proposal = store.proposeLearning({
+      runId: run.id,
+      title: `Reusable workflow: ${intent.slice(0, 80)}`,
+      summary: `Successful local task completed for the redacted intent: ${intent}`,
+      skillDraft: `For a task matching "${intent}", inspect the current project, preserve existing data, and require confirmation before any external or destructive action.`,
+      evidence: ["Task completed successfully through the local NEXUS Assistant."],
+    })
+    process.stderr.write(`${Icon.lock} Learning proposal ${proposal.id} saved. Review explicitly: nexus agent learning approve ${proposal.id}${EOL}`)
+  } catch (error) {
+    process.stderr.write(`${Style.TEXT_WARNING}Learning proposal was not saved: ${error instanceof Error ? error.message : String(error)}${Style.TEXT_NORMAL}${EOL}`)
+  } finally {
+    store.close()
+  }
 }
 
 function printHelp() {

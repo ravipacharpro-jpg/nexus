@@ -35,7 +35,7 @@ export class RotationEngine {
     
     const healthyCount = eligibleValues.filter(val => {
       const status = getCachedKeyStatus(val)
-      return !status || status.status !== "rate_limited"
+      return !status || (status.status !== "rate_limited" && (!status.cooldownUntil || Date.parse(status.cooldownUntil) <= now))
     }).length
 
     let position = this.positions.get(providerID) ?? 0
@@ -113,6 +113,8 @@ export class RotationEngine {
 export const PROVIDER_FALLBACK_ORDER = [
   "groq",
   "openrouter",
+  "cloudflare-workers-ai",
+  "nvidia-nim",
   "google",
   "ollama",
   "opencode",
@@ -151,6 +153,18 @@ export const PREFERRED_MODELS = {
   cohere: ["command-a-03-2025", "command-r-plus-08-2024"],
   fireworks: ["accounts/fireworks/models/llama-v3p3-70b-instruct"],
   moonshotai: ["kimi-k2-0711-preview", "moonshot-v1-8k"],
+  "cloudflare-workers-ai": [
+    "@cf/meta/llama-3.1-8b-instruct",
+    "@cf/qwen/qwen2.5-coder-32b-instruct",
+    "@cf/meta/llama-3.2-11b-vision-instruct",
+    "@cf/qwen/qwq-32b",
+  ],
+  "nvidia-nim": [
+    "meta/llama-3.3-70b-instruct",
+    "qwen/qwen2.5-coder-32b-instruct",
+    "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "qwen/qwen3-next-80b-a3b-thinking",
+  ],
 } as const
 
 export type PreferredProvider = keyof typeof PREFERRED_MODELS
@@ -217,7 +231,7 @@ export function configuredProviderKeys(apiKeys: RotatingKeys | undefined, provid
 export function normalizeProviderKeyName(key: string): string | undefined {
   const normalized = key.trim().toUpperCase()
   if (!normalized.endsWith("_API_KEY")) return undefined
-  const provider = normalized.slice(0, -"_API_KEY".length).toLowerCase()
+  const provider = normalized.slice(0, -"_API_KEY".length).toLowerCase().replace(/_/g, "-")
   const known = [
     "groq",
     "openrouter",
@@ -234,9 +248,13 @@ export function normalizeProviderKeyName(key: string): string | undefined {
     "cohere",
     "fireworks",
     "moonshotai",
+    "cloudflare",
+    "nvidia-nim",
   ]
   if (!known.includes(provider)) return undefined
-  return provider === "gemini" ? "google" : provider
+  if (provider === "gemini") return "google"
+  if (provider === "cloudflare") return "cloudflare-workers-ai"
+  return provider
 }
 
 export function redactSecret(value: string): string {

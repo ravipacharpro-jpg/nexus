@@ -27,7 +27,21 @@ export type CapacityProbe = {
   meminfo?: string
 }
 
-export type PersistedTaskState = "accepted" | "running" | "completed" | "failed"
+export type PersistedTaskState = "accepted" | "running" | "paused" | "cancelled" | "completed" | "failed"
+export type TaskControlAction = "pause" | "cancel" | "update" | "resume"
+
+export type TaskControl = {
+  action: TaskControlAction
+  instruction?: string
+  requestedAt: number
+}
+
+export class TaskControlInterruption extends Error {
+  constructor(readonly action: "pause" | "cancel") {
+    super(action === "pause" ? "Task paused by user." : "Task cancelled by user.")
+    this.name = "TaskControlInterruption"
+  }
+}
 
 export type PersistedTask = {
   id: string
@@ -38,6 +52,7 @@ export type PersistedTask = {
   createdAt: number
   updatedAt: number
   error?: string
+  control?: TaskControl
 }
 
 type TaskStore = {
@@ -66,6 +81,26 @@ function systemAvailableMemoryBytes() {
     : undefined
 }
 
+type StoredTaskProfile = "fast" | "balanced" | "deep" | "local"
+
+function configuredTaskProfile(): StoredTaskProfile | undefined {
+  try {
+    const raw = JSON.parse(
+      readFileSync(process.env.NEXUS_TASK_PROFILE_PATH || join(homedir(), ".nexus", "task-profile.json"), "utf8"),
+    ) as { profile?: unknown }
+    if (raw.profile === "fast" || raw.profile === "balanced" || raw.profile === "deep" || raw.profile === "local") return raw.profile
+  } catch {}
+  return undefined
+}
+
+function applyTaskProfile(plan: CapacityPlan, profile = configuredTaskProfile()): CapacityPlan {
+  if (!profile || profile === "deep") return plan
+  const maxParallel = Math.min(plan.maxParallel, profile === "balanced" ? 3 : 2)
+  const leadCount = 1
+  const workersPerLead = Math.max(1, maxParallel - 1)
+  return { ...plan, maxParallel, leadCount, workersPerLead, workerTaskCount: leadCount * workersPerLead }
+}
+
 export function detectCapacity(probe: CapacityProbe = {}): CapacityPlan {
   const device: DeviceKind = probe.isTermux ?? isTermuxRuntime() ? "Termux" : "PC"
   const meminfo = probe.meminfo
@@ -91,7 +126,7 @@ export function detectCapacity(probe: CapacityProbe = {}): CapacityPlan {
       ? { maxParallel: 6, leadCount: 2, workersPerLead: 3 }
       : { maxParallel: 3, leadCount: 1, workersPerLead: 2 }
 
-  return {
+  return applyTaskProfile({
     device,
     mode,
     totalMemoryBytes,
@@ -99,7 +134,7 @@ export function detectCapacity(probe: CapacityProbe = {}): CapacityPlan {
     processMemoryBytes,
     ...budget,
     workerTaskCount: budget.leadCount * budget.workersPerLead,
-  }
+  })
 }
 
 export function formatDeviceMode(capacity: CapacityPlan) {
@@ -170,6 +205,35 @@ export class SmartManager {
     const current = tasks.find((task) => task.id === id)
     if (!current) return undefined
     return this.taskStore.upsert({ ...current, state, error, updatedAt: Date.now() })
+  }
+
+  async task(id: string) {
+    return (await this.taskStore.list()).find((item) => item.id === id)
+  }
+
+  async list() {
+    return this.taskStore.list()
+  }
+
+  async control(id: string, action: TaskControlAction, instruction?: string) {
+    const current = await this.task(id)
+    if (!current) return undefined
+    const state: PersistedTaskState = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : action === "resume" ? "accepted" : current.state
+    return this.taskStore.upsert({
+      ...current,
+      state,
+      control: { action, instruction: instruction?.trim() || undefined, requestedAt: Date.now() },
+      updatedAt: Date.now(),
+    })
+  }
+
+  async consumeControl(id: string) {
+    const current = await this.task(id)
+    if (!current?.control) return undefined
+    const control = current.control
+    if (control.action === "cancel" || control.action === "pause") return control
+    await this.taskStore.upsert({ ...current, control: undefined, updatedAt: Date.now() })
+    return control
   }
 
   acknowledgement(capacity = this.capacity) {

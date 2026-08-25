@@ -37,12 +37,33 @@ export function isSensitiveAction(text: string): boolean {
   return SENSITIVE_ACTIONS.some((p) => lower.includes(p))
 }
 
+export async function requireAuthorizedTarget(ctx: PluginContext, url: string, operation: string): Promise<boolean> {
+  if (ctx.flags.authorizeTarget !== true) {
+    ctx.err(`Refusing ${operation}: pass --authorize-target only for a website you own or are authorized to test.`)
+    return false
+  }
+  let origin: string
+  try {
+    origin = new URL(url).origin
+  } catch {
+    ctx.err(`Invalid target URL: ${url}`)
+    return false
+  }
+  const approved = await ctx.confirm({
+    title: `Authorize ${operation} for ${origin}?`,
+    detail: "Confirm that you own this target or have permission to test it. NEXUS will not use passwords, OTPs, CAPTCHA bypasses, or exported sessions.",
+    danger: isSensitiveUrl(url),
+  })
+  if (!approved) ctx.out("Target authorization cancelled")
+  return approved
+}
+
 export const SECURITY_RULES = [
   "NO password storage — API tokens/SSH keys only",
   "NO OTP interception — never read SMS, email or authenticator codes",
   "NO CAPTCHA bypass — always human-in-the-loop",
   "NO auto-login — never fill login forms automatically",
-  "Session reuse — only the user's own browser profile on their own machine",
+  "Session reuse — only a NEXUS-owned isolated profile or a user-started loopback CDP browser",
   "Explicit consent — dangerous actions require yes/no confirmation",
   "Audit log — record what was done, never credentials",
 ]
@@ -61,28 +82,44 @@ export async function confirmViaStdin(request: HitlRequest): Promise<boolean> {
   return answer.trim().toLowerCase() === "y" || answer.trim().toLowerCase() === "yes"
 }
 
-function readLine(): Promise<string> {
-  return new Promise((resolve) => {
-    let input = ""
-    const stdin = process.stdin
-    stdin.setEncoding("utf8")
-    stdin.resume()
-    const onData = (chunk: string) => {
-      input += chunk
-      if (input.includes(EOL)) {
-        stdin.pause()
-        stdin.removeListener("data", onData)
-        resolve(input.split(EOL)[0] ?? "")
+type ReadableInput = Pick<typeof process.stdin, "setEncoding" | "resume" | "pause" | "on" | "removeListener">
+
+export function createBufferedLineReader(stdin: ReadableInput = process.stdin) {
+  let pendingStdin = ""
+
+  return function readLine(): Promise<string> {
+    return new Promise((resolve) => {
+      const takeBufferedLine = () => {
+        const index = pendingStdin.indexOf(EOL)
+        if (index === -1) return false
+        const line = pendingStdin.slice(0, index)
+        pendingStdin = pendingStdin.slice(index + EOL.length)
+        resolve(line)
+        return true
       }
-    }
-    stdin.on("data", onData)
-  })
+
+      if (takeBufferedLine()) return
+
+      const onData = (chunk: string) => {
+        pendingStdin += chunk
+        if (!takeBufferedLine()) return
+        stdin.removeListener("data", onData)
+        stdin.pause()
+      }
+
+      stdin.setEncoding("utf8")
+      stdin.resume()
+      stdin.on("data", onData)
+    })
+  }
 }
+
+const readLine = createBufferedLineReader()
 
 export function makeContext(base: Omit<PluginContext, "confirm">): PluginContext {
   return {
     ...base,
-    confirm: (request) => confirmViaStdin(request),
+    confirm: (request) => base.flags.confirm === true ? Promise.resolve(true) : confirmViaStdin(request),
   }
 }
 

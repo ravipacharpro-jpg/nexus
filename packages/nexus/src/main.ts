@@ -40,6 +40,17 @@ import { Heap } from "./cli/heap"
 import { ModCommand } from "./cli/cmd/mod"
 import { AssetCommand } from "./cli/cmd/asset"
 import { LuaCommand } from "./cli/cmd/lua"
+import { DoctorCommand } from "./cli/cmd/doctor"
+import { ProfileCommand } from "./cli/cmd/profile"
+import { OnboardCommand } from "./cli/cmd/onboard"
+import { InstructionsCommand } from "./cli/cmd/instructions"
+import { ArtifactCommand } from "./cli/cmd/artifact"
+import { DeviceCommand } from "./cli/cmd/device"
+import { PermissionCommand } from "./cli/cmd/permission"
+import { WorkspaceCommand } from "./cli/cmd/workspace"
+import { TranslatorCommand } from "./cli/cmd/translator"
+import { IntentCommand } from "./cli/cmd/intent"
+import { MemoryCommand } from "./cli/cmd/memory"
 
 const rawArgs = hideBin(process.argv)
 const args = rawArgs
@@ -125,6 +136,17 @@ const cli = yargs(args)
   .command(AssetCommand)
   .command(LuaCommand)
   .command(AssistantCommand)
+  .command(DoctorCommand)
+  .command(ProfileCommand)
+  .command(OnboardCommand)
+  .command(ArtifactCommand)
+  .command(DeviceCommand)
+  .command(InstructionsCommand)
+  .command(PermissionCommand)
+  .command(WorkspaceCommand)
+  .command(TranslatorCommand)
+  .command(IntentCommand)
+  .command(MemoryCommand)
   .fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||
