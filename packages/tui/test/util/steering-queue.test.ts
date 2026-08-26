@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test"
-import { pendingPrompts, steeringFlow } from "../../src/prompt/steering-queue"
+import {
+  acquireDispatch,
+  pendingPrompts,
+  releaseDispatchFailed,
+  steeringFlow,
+} from "../../src/prompt/steering-queue"
 
 // Unique session IDs per test keep the module-level queue isolated.
 const sid = () => `ses_${crypto.randomUUID()}`
@@ -41,6 +46,50 @@ test("dispatch latch prevents double dispatch until busy is observed", () => {
   steeringFlow.settle(a)
   expect(steeringFlow.shouldDispatch(a)).toBe(true)
 })
+
+test("acquireDispatch consumes exactly one item per idle transition", () => {
+  const a = sid()
+  pendingPrompts.add({ sessionID: a, kind: "followup", input: "one", parts: [] })
+  pendingPrompts.add({ sessionID: a, kind: "followup", input: "two", parts: [] })
+
+  const first = acquireDispatch(a, true, true)
+  expect(first?.input).toBe("one")
+  // Latch is armed: an immediate second acquire (lagging idle event) is refused.
+  expect(acquireDispatch(a, true, true)).toBeUndefined()
+  // Session observed busy again → next idle transition may dispatch "two".
+  steeringFlow.settle(a)
+  const second = acquireDispatch(a, true, true)
+  expect(second?.input).toBe("two")
+  releaseDispatchFailed(second!)
+  pendingPrompts.remove(pendingPrompts.list(a)[0]?.id ?? "")
+})
+
+test("acquireDispatch refuses busy sessions and blocked editors without consuming items", () => {
+  for (const [idle, editor] of [
+    [false, true],
+    [true, false],
+    [false, false],
+  ] as const) {
+    const a = sid()
+    pendingPrompts.add({ sessionID: a, kind: "next", input: "survives", parts: [] })
+    expect(acquireDispatch(a, idle, editor)).toBeUndefined()
+    // Nothing was removed from the queue — no phantom loss.
+    expect(pendingPrompts.list(a).length).toBe(1)
+    pendingPrompts.remove(pendingPrompts.list(a)[0].id)
+  }
+})
+
+test("releaseDispatchFailed restores the item and clears the latch", () => {
+  const a = sid()
+  pendingPrompts.add({ sessionID: a, kind: "next", input: "retry me", parts: [] })
+  const item = acquireDispatch(a, true, true)!
+  expect(item.input).toBe("retry me")
+  releaseDispatchFailed(item)
+  expect(steeringFlow.shouldDispatch(a)).toBe(true)
+  expect(pendingPrompts.list(a).length).toBe(1)
+  expect(pendingPrompts.take(a)?.input).toBe("retry me")
+})
+
 
 test("queued entries carry the full prompt payload intact", () => {
   const a = sid()

@@ -66,3 +66,28 @@ export const steeringFlow = {
     return expectingBusy.get(sessionID) !== true
   },
 }
+
+/**
+ * Consumes the next pending item for a session that just became idle with a
+ * usable editor, arming the duplicate-dispatch latch. Returns undefined when
+ * the session is busy, the editor is unavailable (permission/question prompt),
+ * a dispatch is already in flight, or nothing is queued — an item is only ever
+ * removed from the queue when it will actually be dispatched.
+ */
+export function acquireDispatch(
+  sessionID: string,
+  idle: boolean,
+  editorUsable: boolean,
+): PendingPrompt | undefined {
+  if (!idle || !editorUsable || !steeringFlow.shouldDispatch(sessionID)) return undefined
+  const item = pendingPrompts.take(sessionID)
+  if (!item) return undefined
+  steeringFlow.mark(sessionID)
+  return item
+}
+
+/** Restores an item when its dispatch could not be started (e.g. no prompt ref). */
+export function releaseDispatchFailed(item: PendingPrompt) {
+  steeringFlow.settle(item.sessionID)
+  pendingPrompts.add({ sessionID: item.sessionID, kind: item.kind, input: item.input, parts: item.parts })
+}

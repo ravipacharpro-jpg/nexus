@@ -105,14 +105,24 @@ export function classifySteering(text: string): SteeringKind {
  * Removes the leading stop/cancel phrase so any remaining content can be
  * preserved as the next prompt after an explicit cancellation. Returns an
  * empty string when the message was only a stop request.
+ *
+ * The longest valid leading stop phrase always wins, so overlapping entries
+ * ("stop" vs "stop now", "cancel the task") can never leave a phantom
+ * remainder like "now". Only one phrase is stripped: the remaining text is
+ * preserved verbatim, even when it starts with a word like "stop".
  */
 export function stripStopPhrase(text: string): string {
-  const normalized = normalize(text)
-  const phrase = leadingMatch(normalized, STOP_PHRASES)
-  if (!phrase) return text.trim()
-  const index = text.toLowerCase().indexOf(phrase)
-  const remainder = index === -1 ? "" : text.slice(index + phrase.length)
-  return remainder.replace(/^[\s,.!?;:]+/, "").trim()
+  const trimmed = text.trim()
+  let best: string | undefined
+  for (const phrase of STOP_PHRASES) {
+    const match = trimmed.match(new RegExp(`^${escapeRegExp(phrase)}(?=$|[\\s,.!?;:])`, "i"))
+    if (match && (!best || match[0].length > best.length)) best = match[0]
+  }
+  if (!best) return trimmed
+  return trimmed
+    .slice(best.length)
+    .replace(/^[\s,.!?;:]+/, "")
+    .trim()
 }
 
 /** Fixed acknowledgements. These strings are constants and must never embed user input. */

@@ -80,7 +80,13 @@ import { usePluginRuntime } from "../../plugin/runtime"
 import { DialogRetryAction } from "../../component/dialog-retry-action"
 import { getRevertDiffFiles } from "../../util/revert-diff"
 import { liveActivity } from "../../util/activity"
-import { pendingPrompts, steeringFlow, type PendingPrompt } from "../../prompt/steering-queue"
+import {
+  acquireDispatch,
+  pendingPrompts,
+  releaseDispatchFailed,
+  steeringFlow,
+  type PendingPrompt,
+} from "../../prompt/steering-queue"
 import { steeringStatusLine } from "../../util/steering"
 import { NEXUS_BASE_MODE, useBindings, useCommandShortcut, useNexusKeymap } from "../../keymap"
 import { usePathFormatter } from "../../context/path-format"
@@ -263,24 +269,20 @@ export function Session() {
     on(
       () => sync.data.session_status[route.sessionID]?.type,
       (type) => {
-        if (!type || type === "idle") {
-          // Never yank the editor while a permission/question prompt owns it;
-          // queued items stay pending instead of being discarded.
-          if (!visible()) return
-          if (!steeringFlow.shouldDispatch(route.sessionID)) return
-          const item = pendingPrompts.take(route.sessionID)
-          if (!item) return
-          const ref = promptRef.current
-          if (!ref) {
-            pendingPrompts.add({ sessionID: route.sessionID, kind: item.kind, input: item.input, parts: item.parts })
-            return
-          }
-          steeringFlow.mark(route.sessionID)
-          ref.set({ input: item.input, parts: item.parts, mode: "normal" })
-          ref.submit()
+        const idle = !type || type === "idle"
+        if (!idle) {
+          steeringFlow.settle(route.sessionID)
           return
         }
-        steeringFlow.settle(route.sessionID)
+        const ref = promptRef.current
+        const item = acquireDispatch(route.sessionID, idle, visible() && Boolean(ref))
+        if (!item) return
+        if (!ref) {
+          releaseDispatchFailed(item)
+          return
+        }
+        ref.set({ input: item.input, parts: item.parts, mode: "normal" })
+        ref.submit()
       },
     ),
   )

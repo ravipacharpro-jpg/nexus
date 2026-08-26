@@ -45,10 +45,29 @@ test("ordinary follow-ups are not misclassified", () => {
 test("stripStopPhrase preserves remaining content as the next prompt", () => {
   expect(stripStopPhrase("stop")).toBe("")
   expect(stripStopPhrase("cancel!")).toBe("")
-  expect(stripStopPhrase("stop, run the typecheck instead of lint")).toBe(
+  // Overlapping stop phrases: the longest leading phrase must win so no
+  // phantom remainder ("now") survives as a next prompt.
+  expect(stripStopPhrase("stop now")).toBe("")
+  expect(stripStopPhrase("STOP NOW")).toBe("")
+  expect(stripStopPhrase("stop it")).toBe("")
+  expect(stripStopPhrase("cancel it")).toBe("")
+  expect(stripStopPhrase("cancel that")).toBe("")
+  expect(stripStopPhrase("cancel this")).toBe("")
+  expect(stripStopPhrase("cancel the task")).toBe("")
+  expect(stripStopPhrase("cancel task")).toBe("")
+  expect(stripStopPhrase("abort")).toBe("")
+  expect(stripStopPhrase("ruko")).toBe("")
+  expect(stripStopPhrase("band karo")).toBe("")
+  // A stop phrase followed by actual task text preserves only the task text.
+  expect(stripStopPhrase("stop now, run the typecheck instead of lint")).toBe(
     "run the typecheck instead of lint",
   )
+  expect(stripStopPhrase("cancel the task; deploy staging after that")).toBe(
+    "deploy staging after that",
+  )
   expect(stripStopPhrase("ruko, pehle tests chalao")).toBe("pehle tests chalao")
+  // Task text starting with a stop-like word is preserved verbatim.
+  expect(stripStopPhrase("cancel that. stop the server first")).toBe("stop the server first")
   // Non-stop input is returned untouched.
   expect(stripStopPhrase("deploy to staging")).toBe("deploy to staging")
 })
