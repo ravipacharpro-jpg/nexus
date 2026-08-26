@@ -79,6 +79,7 @@ import { collapseToolOutput } from "../../util/collapse-tool-output"
 import { usePluginRuntime } from "../../plugin/runtime"
 import { DialogRetryAction } from "../../component/dialog-retry-action"
 import { getRevertDiffFiles } from "../../util/revert-diff"
+import { activityLabel } from "../../util/activity"
 import { NEXUS_BASE_MODE, useBindings, useCommandShortcut, useNexusKeymap } from "../../keymap"
 import { usePathFormatter } from "../../context/path-format"
 import { LocationProvider } from "../../context/location"
@@ -1595,37 +1596,6 @@ const PART_MAPPING = {
   text: TextPart,
   tool: ToolPart,
   reasoning: ReasoningPart,
-}
-
-// One-line, human-readable narration for a running tool. Input keys vary by
-// tool, so every lookup is defensive and truncation keeps the line single-row.
-function activityLabel(part: ToolPart): string {
-  const input = (part.state.input ?? {}) as Record<string, unknown>
-  const target = stringValue(input.filePath ?? input.path ?? input.url ?? input.pattern ?? input.query ?? input.description)
-  const detail = Locale.truncate(target ?? "", 48)
-  switch (part.tool) {
-    case "bash":
-      return `Running ${Locale.truncate(stringValue(input.command) ?? "command", 64)}`
-    case "read":
-      return detail ? `Reading ${detail}` : "Reading..."
-    case "edit":
-      return detail ? `Editing ${detail}` : "Editing..."
-    case "write":
-      return detail ? `Writing ${detail}` : "Writing..."
-    case "grep":
-      return detail ? `Searching ${detail}` : "Searching..."
-    case "glob":
-      return detail ? `Finding ${detail}` : "Finding files..."
-    case "webfetch":
-      return detail ? `Fetching ${detail}` : "Fetching from the web..."
-    case "task":
-      return detail ? `Delegating: ${detail}` : "Delegating..."
-    default: {
-      const title = stringValue(part.state.title)
-      const label = Locale.titlecase(part.tool)
-      return title ? `${label} ${Locale.truncate(title, 48)}` : `${label}...`
-    }
-  }
 }
 
 const INLINE_TOOL_ICON_WIDTH = 2
