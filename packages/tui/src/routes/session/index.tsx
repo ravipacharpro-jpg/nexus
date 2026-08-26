@@ -265,27 +265,36 @@ export function Session() {
   // Dispatch locally queued steering messages (follow-ups, stop remainders,
   // approved cancel-and-replace) through the normal prompt path once the
   // session becomes idle. No background worker or parallel dispatch involved.
-  createEffect(
-    on(
-      () => sync.data.session_status[route.sessionID]?.type,
-      (type) => {
-        const idle = !type || type === "idle"
-        if (!idle) {
-          steeringFlow.settle(route.sessionID)
-          return
-        }
-        const ref = promptRef.current
-        const item = acquireDispatch(route.sessionID, idle, visible() && Boolean(ref))
-        if (!item) return
-        if (!ref) {
-          releaseDispatchFailed(item)
-          return
-        }
-        ref.set({ input: item.input, parts: item.parts, mode: "normal" })
-        ref.submit()
-      },
-    ),
-  )
+  // Plain tracked effect (not `on`): idle status, editor availability, and
+  // prompt-ref presence must all retrigger dispatch evaluation.
+  const [queueVersion, setQueueVersion] = createSignal(0)
+  onMount(() => {
+    const unsubscribe = pendingPrompts.subscribe(() => setQueueVersion((version) => version + 1))
+    onCleanup(unsubscribe)
+  })
+  const queuedItems = createMemo(() => {
+    queueVersion()
+    return pendingPrompts.list(route.sessionID)
+  })
+
+  createEffect(() => {
+    const type = sync.data.session_status[route.sessionID]?.type
+    const idle = !type || type === "idle"
+    if (!idle) {
+      steeringFlow.settle(route.sessionID)
+      return
+    }
+    const usable = visible() && Boolean(promptRef.current)
+    const item = acquireDispatch(route.sessionID, idle, usable)
+    if (!item) return
+    const ref = promptRef.current
+    if (!ref) {
+      releaseDispatchFailed(item)
+      return
+    }
+    ref.set({ input: item.input, parts: item.parts as PromptInfo["parts"], mode: "normal" })
+    ref.submit()
+  })
 
   const dimensions = useTerminalDimensions()
   const [sidebar, setSidebar] = kv.signal<"auto" | "hide">("sidebar", "auto")
@@ -1328,7 +1337,7 @@ export function Session() {
                 </For>
               </scrollbox>
               <box flexShrink={0}>
-                <SteeringQueue sessionID={route.sessionID} />
+                <SteeringQueue sessionID={route.sessionID} items={queuedItems()} />
                 <Show when={activity()}>
                   <box paddingLeft={3}>
                     <Spinner color={theme.textMuted}>{activity()}</Spinner>
@@ -1402,21 +1411,20 @@ export function Session() {
 }
 
 /** Visible, editable, removable list of messages waiting for the active task to finish. */
-function SteeringQueue(props: { sessionID: string }) {
+function SteeringQueue(props: { sessionID: string; items: PendingPrompt[] }) {
   const { theme } = useTheme()
   const promptRef = usePromptRef()
-  const items = createMemo(() => pendingPrompts.list(props.sessionID))
 
   const editQueued = (item: PendingPrompt) => {
     pendingPrompts.remove(item.id)
-    promptRef.current?.set({ input: item.input, parts: item.parts, mode: "normal" })
+    promptRef.current?.set({ input: item.input, parts: item.parts as PromptInfo["parts"], mode: "normal" })
     promptRef.current?.focus()
   }
 
   return (
-    <Show when={items().length > 0}>
+    <Show when={props.items.length > 0}>
       <box paddingLeft={3} flexDirection="column">
-        <For each={items()}>
+        <For each={props.items}>
           {(item) => (
             <box flexDirection="row" gap={2}>
               <text fg={theme.textMuted} flexShrink={0}>

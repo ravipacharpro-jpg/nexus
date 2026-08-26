@@ -53,13 +53,15 @@ export async function steerActiveTask(text: string, parts: readonly unknown[], d
   }
 
   if (kind === "stop") {
-    // Cancel first; on failure nothing is queued or cleared so the user keeps
-    // full control instead of a phantom next prompt firing mid-task.
+    // Acknowledge immediately, before awaiting the abort: a slow cancellation
+    // must never delay the promised local response. If the abort then fails,
+    // nothing is queued or cleared, so no phantom prompt can fire and the
+    // editor keeps the user's text.
+    deps.ack(STEERING_ACK.stop)
     const aborted = await performAbort(deps)
     if (!aborted) return { action: "stop", aborted: false, queued: 0 }
     const remainder = stripStopPhrase(text)
     if (remainder) deps.enqueue({ kind: "next", input: remainder, parts })
-    deps.ack(STEERING_ACK.stop)
     deps.clearInput()
     return { action: "stop", aborted: true, queued: remainder ? 1 : 0 }
   }
