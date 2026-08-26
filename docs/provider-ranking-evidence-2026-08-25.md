@@ -20,4 +20,8 @@ OpenRouter documents free-model limits of 20 RPM and 50 RPD for accounts with fe
 4. **Paid, trial, or unverified recurring allocation:** remaining providers, alphabetical after the existing capability/contract order.
 5. **Custom endpoint:** always last.
 
+### Documented daily-allocation secondary ordering
+
+Within the qualitative order above, a provider that publishes one fixed recurring daily free figure carries it as structured `freeDaily` data (Cloudflare Workers AI: 10,000 Neurons/day; OpenRouter: up to 1,000 free-model requests/day at the credit threshold). The picker sorts equal-category providers by that documented amount before falling back to name order. Providers without a single documented cross-model figure (Groq, Gemini) deliberately carry no number rather than an estimate.
+
 The application must retain manual provider choice and must not contact a provider, inspect a key, estimate balance, or alter routing merely to display this ranking.

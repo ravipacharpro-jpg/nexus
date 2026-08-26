@@ -25,6 +25,12 @@ export type NexusApiKeyProvider = {
   access: ProviderAccessCategory
   /** Lower values are presented first in the existing picker. */
   rank: number
+  /**
+   * Recurring free daily allocation published by the provider itself.
+   * Only set when the provider documents one fixed figure; never estimated,
+   * inferred from an account, or treated as a guaranteed entitlement.
+   */
+  freeDaily?: { amount: number; unit: string }
   badge?: string
   detail?: string
 }
@@ -35,6 +41,7 @@ export const NEXUS_API_KEY_PROVIDERS: NexusApiKeyProvider[] = [
     name: "Cloudflare Workers AI",
     access: "verified-recurring",
     rank: 10,
+    freeDaily: { amount: 10_000, unit: "Neurons/day" },
     badge: "Verified daily allocation",
     detail: "10k Neurons/day; some models and account plans have conditions",
   },
@@ -59,8 +66,9 @@ export const NEXUS_API_KEY_PROVIDERS: NexusApiKeyProvider[] = [
     name: "OpenRouter",
     access: "conditional-free",
     rank: 20,
-    badge: "Conditional free models",
-    detail: "Free-model caps and account-credit conditions apply",
+    freeDaily: { amount: 1_000, unit: "free-model requests/day" },
+    badge: "Up to 1k free req/day",
+    detail: "50 req/day under $10 all-time credits, then 1,000; free-model caps and credit conditions apply",
   },
   { id: "nvidia-nim", name: "NVIDIA NIM", access: "account-specific", rank: 30, badge: "Account/model access" },
   { id: "cerebras", name: "Cerebras", access: "paid-or-unknown", rank: 40 },
@@ -80,6 +88,9 @@ export const NEXUS_API_KEY_PROVIDERS: NexusApiKeyProvider[] = [
 
 export function rankedApiKeyProviders() {
   return [...NEXUS_API_KEY_PROVIDERS].sort(
-    (left, right) => left.rank - right.rank || left.name.localeCompare(right.name),
+    (left, right) =>
+      left.rank - right.rank ||
+      (right.freeDaily?.amount ?? 0) - (left.freeDaily?.amount ?? 0) ||
+      left.name.localeCompare(right.name),
   )
 }

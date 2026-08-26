@@ -25,12 +25,28 @@ describe("NEXUS API provider picker policy", () => {
     })
     expect(ranked.find((provider) => provider.id === "openrouter")).toMatchObject({
       access: "conditional-free",
-      badge: "Conditional free models",
+      badge: "Up to 1k free req/day",
     })
     expect(ranked.find((provider) => provider.id === "nvidia-nim")).toMatchObject({
       access: "account-specific",
       badge: "Account/model access",
     })
+  })
+
+  test("orders providers with a documented daily free allocation above same-category peers without one", () => {
+    const ranked = rankedApiKeyProviders()
+    const cloudflare = ranked.findIndex((provider) => provider.id === "cloudflare-workers-ai")
+    const groq = ranked.findIndex((provider) => provider.id === "groq")
+    const gemini = ranked.findIndex((provider) => provider.id === "gemini")
+    const openrouter = ranked.findIndex((provider) => provider.id === "openrouter")
+    expect(cloudflare).toBeLessThan(groq)
+    expect(cloudflare).toBeLessThan(gemini)
+    expect(openrouter).toBeLessThan(ranked.findIndex((provider) => provider.id === "nvidia-nim"))
+    expect(ranked.find((provider) => provider.id === "cloudflare-workers-ai")?.freeDaily).toEqual({
+      amount: 10_000,
+      unit: "Neurons/day",
+    })
+    expect(ranked.find((provider) => provider.id === "groq")?.freeDaily).toBeUndefined()
   })
 
   test("keeps custom onboarding available while omitting fabricated free-quota badges", () => {
