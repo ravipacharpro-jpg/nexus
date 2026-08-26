@@ -58,6 +58,10 @@ import { usePromptWorkspace } from "./workspace"
 import { usePromptMove } from "./move"
 import { readLocalAttachment } from "./local-attachment"
 import { useLocation } from "../../context/location"
+import { DialogSteeringChoice } from "../dialog-steering-choice"
+import { pendingPrompts } from "../../prompt/steering-queue"
+import { classifySteering, STEERING_ACK, steeringStatusLine, stripStopPhrase } from "../../util/steering"
+import { liveActivity } from "../../util/activity"
 
 registerNexusSpinner()
 
@@ -1099,6 +1103,12 @@ export function Prompt(props: PromptProps) {
         parts: nonTextParts.filter((x) => x.type === "file"),
       })
     } else {
+      // Active-task steering: while a task runs, classify the incoming
+      // message locally and handle it without a hidden parallel dispatch.
+      if (props.sessionID && status().type !== "idle") {
+        const steered = await steerActiveTask(sessionID, inputText, nonTextParts)
+        if (steered) return true
+      }
       move.startSubmit()
       sdk.client.session
         .prompt(
@@ -1153,6 +1163,74 @@ export function Prompt(props: PromptProps) {
     input.clear()
     if (finishMoveProgress) move.finishSubmit()
     return true
+  }
+
+  /**
+   * Handles a message submitted while a task is active. Returns true when the
+   * message was consumed locally (status answer, stop, change choice, or a
+   * queued follow-up) so no parallel model dispatch is started.
+   */
+  async function steerActiveTask(sessionID: string, text: string, nonTextParts: PromptInfo["parts"]) {
+    const kind = classifySteering(text)
+
+    if (kind === "status") {
+      // Answer locally with an existing redacted activity category only.
+      const current = sync.data.message[sessionID]?.findLast((x) => x.role === "assistant" && !x.time?.completed)
+      const stage = current ? liveActivity(sync.data.part[current.id] ?? []) : undefined
+      toast.show({
+        message: steeringStatusLine(stage),
+        variant: "info",
+        duration: 4000,
+      })
+      return true
+    }
+
+    if (kind === "stop") {
+      void sdk.client.session.abort({ sessionID }).catch((error) => {
+        toast.show({ title: "Failed to stop task", message: errorMessage(error), variant: "error" })
+      })
+      const remainder = stripStopPhrase(text)
+      if (remainder) {
+        pendingPrompts.add({ sessionID, kind: "next", input: remainder, parts: nonTextParts })
+      }
+      toast.show({ message: STEERING_ACK.stop, variant: "info", duration: 3000 })
+      clearComposedPrompt()
+      props.onSubmit?.()
+      return true
+    }
+
+    if (kind === "change") {
+      toast.show({ message: STEERING_ACK.change, variant: "info", duration: 3000 })
+      const choice = await DialogSteeringChoice.show(dialog)
+      if (!choice) return true
+      if (choice === "replace") {
+        void sdk.client.session.abort({ sessionID }).catch((error) => {
+          toast.show({ title: "Failed to stop task", message: errorMessage(error), variant: "error" })
+        })
+        pendingPrompts.add({ sessionID, kind: "next", input: text, parts: nonTextParts })
+      } else {
+        pendingPrompts.add({ sessionID, kind: "followup", input: text, parts: nonTextParts })
+      }
+      clearComposedPrompt()
+      props.onSubmit?.()
+      return true
+    }
+
+    // Normal follow-up: acknowledge immediately and keep it visible,
+    // editable, and removable until the active turn finishes.
+    pendingPrompts.add({ sessionID, kind: "followup", input: text, parts: nonTextParts })
+    toast.show({ message: STEERING_ACK.followup, variant: "info", duration: 3000 })
+    clearComposedPrompt()
+    props.onSubmit?.()
+    return true
+  }
+
+  /** Clears the composed prompt without touching prompt history. */
+  function clearComposedPrompt() {
+    input.extmarks.clear()
+    setStore("prompt", { input: "", parts: [] })
+    setStore("extmarkToPartIndex", new Map())
+    input.clear()
   }
 
   function pasteText(text: string, virtualText: string) {
