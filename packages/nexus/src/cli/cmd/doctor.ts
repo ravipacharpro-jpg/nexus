@@ -340,4 +340,23 @@ function withinMs<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
+/**
+ * Legacy adapter still consumed by onboard.ts: maps the current check report
+ * onto the original {storage, deviceGuard} shape without exposing secrets.
+ */
+export async function collectDoctorReport() {
+  const results = await runChecks(createChecks(createDefaultIO()))
+  const state = (name: string) => results.find((result) => result.name === name)?.state
+  const writable = ["Shared storage access", "Vault and config"].every((name) => state(name) === "ok")
+  const critical = ["Runtime environment", "Task queue integrity", "Disk space on home"].filter(
+    (name) => state(name) === "fail",
+  ).length
+  return {
+    storage: { writable },
+    deviceGuard: {
+      level: critical > 1 ? ("blocked" as const) : critical === 1 ? ("warn" as const) : ("ok" as const),
+    },
+  }
+}
+
 export * as Doctor from "./doctor"
