@@ -241,7 +241,7 @@ const layer = Layer.effect(
           .install(dir, {
             add: [
               {
-                name: "@opencode-ai/plugin",
+                name: "@nexus-ai/plugin",
                 version: InstallationLocal ? undefined : ExternalPluginVersion,
               },
             ],

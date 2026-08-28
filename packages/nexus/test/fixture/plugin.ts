@@ -9,6 +9,6 @@ export async function markPluginDependenciesReady(dir: string) {
     // launch a detached install. Keep the fixture aligned with the runtime
     // dependency so plugin-provider tests never make network work part of a
     // lifecycle assertion.
-    JSON.stringify({ packages: { "": { dependencies: { "@opencode-ai/plugin": "0.0.0" } } } }),
+    JSON.stringify({ packages: { "": { dependencies: { "@nexus-ai/plugin": "0.0.0" } } } }),
   )
 }
