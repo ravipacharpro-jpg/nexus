@@ -12,6 +12,8 @@ export type AutoModelInput = {
   connected?: Array<string>
   keyHealth?: Array<AutoKeyHealth>
   quarantined?: ReadonlyArray<string>
+  /** When non-empty, Auto only switches among these user-selected models. */
+  selectedModels?: ReadonlyArray<{ providerID: string; modelID: string }>
 }
 
 export type AutoModelChoice = {
@@ -49,6 +51,7 @@ export function routeKey(providerID: string, modelID: string) {
  */
 export function resolveAutoModel(input: AutoModelInput): AutoModelChoice | undefined {
   const requirements = classify(input.task, input.hasImage === true)
+  const selected = input.selectedModels
   const usable = input.providers
     .flatMap((provider) => Object.values(provider.models).map((model) => ({ provider, model })))
     .filter(
@@ -56,7 +59,9 @@ export function resolveAutoModel(input: AutoModelInput): AutoModelChoice | undef
         model.status !== "deprecated" &&
         supports(model, requirements) &&
         !input.quarantined?.includes(routeKey(provider.id, model.id)) &&
-        configured(provider.id, input),
+        configured(provider.id, input) &&
+        (!selected || selected.length === 0 ||
+          selected.some((m) => m.providerID === provider.id && m.modelID === model.id)),
     )
   if (usable.length === 0) return undefined
   // Enforce capabilities first, then choose the cheapest suitable route.

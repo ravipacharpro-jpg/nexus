@@ -1005,6 +1005,7 @@ export function Prompt(props: PromptProps) {
         connected: sync.data.provider_next.connected,
         keyHealth: sync.data.provider_keys,
         quarantined: quarantinedRoutes(kv),
+        selectedModels: local.model.autoSwitchModels(),
       })
       // Never fall back silently to an unconfigured route; stop truthfully instead.
       if (!resolved) {

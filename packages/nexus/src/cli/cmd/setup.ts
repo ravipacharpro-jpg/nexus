@@ -99,12 +99,24 @@ export function isChatModelID(id: string, provider: KeyProvider): boolean {
   return /gemini-(?:3(?:\.\d+)?|2\.5|2\.0|1\.5)-(?:flash|pro)/i.test(id)
 }
 
+function redactForLog(value: string): string {
+  return value
+    .replace(
+      /("(?:api_?key|token|secret|password|authorization)"\s*:\s*")([^"]+)(")/gi,
+      "$1***$3",
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._-]+/g, "Bearer ***")
+    .replace(/\bgh[po]_[A-Za-z0-9]{20,}/g, "***")
+}
+
 async function setupResponseOK(provider: string, response: Response, url: string) {
   console.log(`Response status: ${response.status}`)
   if (!response.ok) {
     if (setupDebugEnabled()) {
       const body = await response.clone().text().catch(() => "<unreadable response body>")
-      console.error(`[NEXUS API] setup provider=${provider} status=${response.status} url=${setupSafeURL(url)} body=${body.slice(0, 2000)}`)
+      console.error(
+        `[NEXUS API] setup provider=${provider} status=${response.status} url=${setupSafeURL(url)} body=${redactForLog(body.slice(0, 2000))}`,
+      )
     }
     console.error(`❌ Key invalid / network error (HTTP ${response.status})`)
   }

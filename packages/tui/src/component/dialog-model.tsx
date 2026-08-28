@@ -9,7 +9,7 @@ import * as fuzzysort from "fuzzysort"
 import { useConnected } from "./use-connected"
 import { useSync } from "../context/sync"
 
-export function DialogModel(props: { providerID?: string }) {
+export function DialogModel(props: { providerID?: string; onPick?: (providerID: string, modelID: string) => void }) {
   const local = useLocal()
   const sync = useSync()
   const dialog = useDialog()
@@ -68,7 +68,6 @@ export function DialogModel(props: { providerID?: string }) {
         pipe(
           provider.models,
           entries(),
-          filter(([_, info]) => info.status !== "deprecated"),
           filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
           map(([model, info]) => ({
             value: { providerID: provider.id, modelID: model },
@@ -131,8 +130,8 @@ export function DialogModel(props: { providerID?: string }) {
               category: "Mode",
               footer: local.model.isAuto() ? "Active · token-saving" : "Task-aware",
               onSelect: () => {
-                local.model.setAuto(true)
-                dialog.clear()
+                if (!local.model.isAuto()) local.model.setAuto(true)
+                dialog.replace(() => <DialogAutoModel />)
               },
             },
           ]
@@ -162,6 +161,10 @@ export function DialogModel(props: { providerID?: string }) {
   })
 
   function onSelect(providerID: string, modelID: string) {
+    if (props.onPick) {
+      props.onPick(providerID, modelID)
+      return
+    }
     local.model.set({ providerID, modelID }, { recent: true })
     const list = local.model.variant.list()
     const cur = local.model.variant.selected()
@@ -201,6 +204,76 @@ export function DialogModel(props: { providerID?: string }) {
       skipFilter={true}
       title={title()}
       current={local.model.current()}
+    />
+  )
+}
+
+export function DialogAutoModel() {
+  const local = useLocal()
+  const dialog = useDialog()
+
+  const enabled = createMemo(() => local.model.isAuto())
+  const selected = createMemo(() => local.model.autoSwitchModels())
+
+  const options = createMemo(() => {
+    const opts = [
+      {
+        key: "toggle",
+        value: "toggle",
+        title: `Auto switch: ${enabled() ? "On" : "Off"}`,
+        description: "Automatically route to the best eligible model with safe fallback.",
+        footer: enabled() ? "On" : "Off",
+        onSelect: () => {
+          local.model.setAuto(!enabled())
+          dialog.replace(() => <DialogAutoModel />)
+        },
+      },
+      {
+        key: "add",
+        value: "add",
+        title: "Add model",
+        description:
+          "Add a model to the switch pool. When the pool is non-empty, Auto only switches among your selected models.",
+        onSelect: () => {
+          dialog.replace(() => (
+            <DialogModel
+              onPick={(providerID, modelID) => {
+                local.model.addAutoSwitchModel({ providerID, modelID })
+                dialog.replace(() => <DialogAutoModel />)
+              }}
+            />
+          ))
+        },
+      },
+    ]
+    for (const model of selected()) {
+      opts.push({
+        key: `model-${model.providerID}-${model.modelID}`,
+        value: `${model.providerID}/${model.modelID}`,
+        title: `${model.providerID}/${model.modelID}`,
+        description: "Selected switch model",
+        footer: "Remove",
+        onSelect: () => {
+          local.model.removeAutoSwitchModel(model)
+          dialog.replace(() => <DialogAutoModel />)
+        },
+      })
+    }
+    return opts
+  })
+
+  return (
+    <DialogSelect
+      options={options()}
+      title="Auto Model"
+      current={undefined}
+      actions={[
+        {
+          command: "model.dialog.autoswitch.done",
+          title: "Done",
+          onTrigger: () => dialog.clear(),
+        },
+      ]}
     />
   )
 }

@@ -63,9 +63,7 @@ export function normalizeProviderList(
           provider.id,
           {
             ...provider,
-            models: Object.fromEntries(
-              Object.entries(provider.models).filter(([, model]) => model.status !== "deprecated"),
-            ),
+            models: Object.fromEntries(Object.entries(provider.models)),
           },
         ]),
       ),
@@ -86,7 +84,7 @@ export function normalizeProviderList(
 
   for (const model of models ?? []) {
     const provider = all.get(model.providerID)
-    if (!provider || model.status === "deprecated") continue
+    if (!provider) continue
     const cost = model.cost.find((item) => item.tier === undefined) ?? model.cost[0]
     provider.models[model.id] = {
       id: model.id,
@@ -145,7 +143,7 @@ export function normalizeProviderList(
         const model =
           defaultModel?.providerID === provider.id
             ? defaultModel
-            : models?.find((item) => item.providerID === provider.id && item.status !== "deprecated")
+            : models?.find((item) => item.providerID === provider.id)
         return model ? [[provider.id, model.id]] : []
       }),
     ),

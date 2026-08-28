@@ -58,7 +58,7 @@ const keepAliveForLiaisonTask = args[0] === "liaison" && args.length > 1
 
 function show(out: string) {
   const text = out.trimStart()
-  if (!text.startsWith("nexus ") && !text.startsWith("nexus ")) {
+  if (!text.startsWith("nexus ")) {
     process.stderr.write(UI.logo() + EOL + EOL)
     process.stderr.write(text + EOL)
     return

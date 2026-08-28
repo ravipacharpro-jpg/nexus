@@ -247,7 +247,15 @@ async function deployFly(ctx: PluginContext): Promise<number | void> {
       return 0
     }
     ctx.out(`${Icon.rocket} Installing flyctl...`)
-    Bun.spawnSync(["sh", "-c", "curl -fsSL https://fly.io/install.sh | sh"], { stdout: "ignore", stderr: "ignore" })
+    // Download the installer to a temp file first so it is not executed straight
+    // from a pipe; the user can review it before it runs.
+    const scriptPath = path.join(os.tmpdir(), `fly-install-${Date.now()}.sh`)
+    Bun.spawnSync(["sh", "-c", `curl -fsSL https://fly.io/install.sh -o "${scriptPath}"`], {
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    ctx.out(`${Icon.info} Installer downloaded to ${scriptPath} — review it before execution`)
+    Bun.spawnSync(["sh", scriptPath], { stdout: "ignore", stderr: "ignore" })
     process.env.PATH = `${process.env.HOME}/.fly/bin:${process.env.PATH}`
     flyctl = Bun.which("flyctl") ?? Bun.which("fly")
   }

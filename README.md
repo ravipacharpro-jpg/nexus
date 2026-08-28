@@ -48,10 +48,10 @@
 
 ```bash
 # Termux, Linux, and PC installer
-curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/nexus-fixed/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ravipacharpro-jpg/nexus-agent/main/install.sh | bash
 
 # Pin the latest verified installer-compatible version
-curl -fsSL https://raw.githubusercontent.com/itzgeniusboy/nexus-fixed/main/install.sh | bash -s -- --version 0.1.67
+curl -fsSL https://raw.githubusercontent.com/ravipacharpro-jpg/nexus-agent/main/install.sh | bash -s -- --version 0.1.60
 
 # Package managers
 npm i -g nexus-ai@latest        # or bun/pnpm/yarn

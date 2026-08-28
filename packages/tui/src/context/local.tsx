@@ -154,6 +154,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         }[]
         variant: Record<string, string | undefined>
         auto: Record<string, boolean>
+        autoSwitchModels: Record<string, { providerID: string; modelID: string }[]>
       }>({
         ready: false,
         model: {},
@@ -161,6 +162,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         favorite: [],
         variant: {},
         auto: {},
+        autoSwitchModels: {},
       })
 
       const filePath = path.join(paths.state, "model.json")
@@ -179,6 +181,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           favorite: modelStore.favorite,
           variant: modelStore.variant,
           auto: modelStore.auto,
+          autoSwitchModels: modelStore.autoSwitchModels,
         })
       }
 
@@ -192,6 +195,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             setModelStore("variant", value.variant as Record<string, string | undefined>)
           if (typeof value.auto === "object" && value.auto !== null)
             setModelStore("auto", value.auto as Record<string, boolean>)
+          if (typeof value.autoSwitchModels === "object" && value.autoSwitchModels !== null)
+            setModelStore(
+              "autoSwitchModels",
+              value.autoSwitchModels as Record<string, { providerID: string; modelID: string }[]>,
+            )
         })
         .catch(() => {})
         .finally(() => {
@@ -351,6 +359,40 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           const a = agent.current()
           if (!a) return
           setModelStore("auto", a.name, value)
+          save()
+        },
+        autoSwitchModels() {
+          const a = agent.current()
+          return a ? (modelStore.autoSwitchModels[a.name] ?? []) : []
+        },
+        addAutoSwitchModel(model: { providerID: string; modelID: string }) {
+          const a = agent.current()
+          if (!a) return
+          if (!isModelValid(model)) {
+            toast.show({
+              message: `Model ${model.providerID}/${model.modelID} is not valid`,
+              variant: "warning",
+              duration: 3000,
+            })
+            return
+          }
+          const current = modelStore.autoSwitchModels[a.name] ?? []
+          if (current.some((x) => x.providerID === model.providerID && x.modelID === model.modelID)) return
+          setModelStore("autoSwitchModels", a.name, [
+            ...current,
+            { providerID: model.providerID, modelID: model.modelID },
+          ])
+          save()
+        },
+        removeAutoSwitchModel(model: { providerID: string; modelID: string }) {
+          const a = agent.current()
+          if (!a) return
+          const current = modelStore.autoSwitchModels[a.name] ?? []
+          setModelStore(
+            "autoSwitchModels",
+            a.name,
+            current.filter((x) => !(x.providerID === model.providerID && x.modelID === model.modelID)),
+          )
           save()
         },
         toggleFavorite(model: { providerID: string; modelID: string }) {

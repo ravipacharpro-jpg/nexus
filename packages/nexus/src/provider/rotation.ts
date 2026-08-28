@@ -36,40 +36,21 @@ export class RotationEngine {
 
     if (eligibleValues.length === 0) return undefined
 
-    const targetPool = eligibleValues.filter((value) => {
+    const position = this.positions.get(providerID) ?? 0
+    const now = Date.now()
+
+    // Rotate deterministically over the eligible set. The cursor is indexed into
+    // `eligibleValues` (not the full key list) so changes in the eligible set
+    // between calls can no longer skip or reuse keys.
+    for (let attempts = 0; attempts < eligibleValues.length; attempts++) {
+      const index = (position + attempts) % eligibleValues.length
+      const value = eligibleValues[index]
       const status = getCachedKeyStatus(value)
-      return (
-        !status ||
-        status.status === "active" ||
-        status.status === "unknown" ||
-        status.status === "rate_limited" ||
-        status.status === "suspended"
-      )
-    })
-
-    let position = this.positions.get(providerID) ?? 0
-    let attempts = 0
-    let selectedValue: string | undefined
-
-    // A simpler approach: iterate over allValues starting from position, and pick the first one that is in targetPool.
-    while (attempts < allValues.length) {
-      const index = position % allValues.length
-      const value = allValues[index]
-      position++
-      attempts++
-
-      if (targetPool.includes(value)) {
-        selectedValue = value
-        // Update the position in the map to the index *after* the one we just picked,
-        // so the next call starts searching from the subsequent key.
-        this.positions.set(providerID, (index + 1) % allValues.length)
-        this.selectedKeys.set(providerID, value)
-        break
-      }
-    }
-
-    if (selectedValue !== undefined) {
-      return selectedValue
+      // Skip keys that entered a cooldown since the eligible snapshot was taken.
+      if (status?.cooldownUntil && Date.parse(status.cooldownUntil) > now) continue
+      this.positions.set(providerID, (index + 1) % eligibleValues.length)
+      this.selectedKeys.set(providerID, value)
+      return value
     }
 
     return undefined

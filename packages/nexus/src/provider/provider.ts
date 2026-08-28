@@ -265,13 +265,23 @@ function apiBodySummary(init?: RequestInit) {
   }
 }
 
+function redactForLog(value: string): string {
+  return value
+    .replace(
+      /("(?:api_?key|token|secret|password|authorization)"\s*:\s*")([^"]+)(")/gi,
+      "$1***$3",
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._-]+/g, "Bearer ***")
+    .replace(/\bgh[po]_[A-Za-z0-9]{20,}/g, "***")
+}
+
 async function debugApiResponse(response: Response, url: string) {
   if (!apiDebugEnabled()) return
   const body = await response
     .clone()
     .text()
     .catch(() => "<unreadable response body>")
-  console.error(`[NEXUS API] response status=${response.status} url=${url} body=${body.slice(0, 2000)}`)
+  console.error(`[NEXUS API] response status=${response.status} url=${url} body=${redactForLog(body.slice(0, 2000))}`)
 }
 
 function googleVertexAnthropicBaseURL(project: string | undefined, location: string | undefined) {
@@ -355,14 +365,23 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       if (input.env.some((item) => env[item])) return true
       return false
     })
+    // OpenCode / NEXUS are public gateways: their models should always be
+    // selectable even without a key, and they may not report pricing.
+    const isPublicGateway = input.id === "opencode" || input.id === "nexus"
     const ok =
+      isPublicGateway ||
       hasKey ||
       Boolean(yield* dep.auth(input.id)) ||
       Boolean((yield* dep.config()).provider?.[input.id]?.options?.apiKey)
 
     if (!ok) {
       for (const [key, value] of Object.entries(input.models)) {
-        if (value.cost.input === 0) continue
+        const isFree = value.cost != null && value.cost.input === 0
+        const unknownCost = value.cost == null || typeof value.cost.input !== "number"
+        // Keep free models and models whose cost is unknown (the gateway may not
+        // report pricing). Only drop models we know are paid, so a missing cost
+        // field can never wipe the whole catalog.
+        if (isFree || unknownCost) continue
         delete input.models[key]
       }
     }
@@ -1576,7 +1595,8 @@ function modelSuggestions(provider: Info | undefined, modelID: ModelV2.ID, enabl
     ? Object.keys(provider.models).filter((id) => {
         const model = provider.models[id]
         if (model.status === "deprecated") return false
-        if (model.status === "alpha" && !enableExperimentalModels) return false
+        // Alpha models stay discoverable; the selector surfaces them as
+        // experimental and Auto still applies eligibility checks before use.
         return true
       })
     : []
@@ -1908,11 +1928,11 @@ const layer = Layer.effect(
               (providerID === ProviderV2.ID.openrouter && modelID === "openai/gpt-5-chat")
             )
               delete provider.models[modelID]
-            // Keep provider-accessible alpha models discoverable. They are shown as
-            // experimental in the selector and Auto can still apply capability,
-            // credential, health, and quota eligibility checks before selecting one.
-            // Only deprecated models are removed from the active catalog.
-            if (model.status === "deprecated") delete provider.models[modelID]
+            // Keep provider-accessible alpha and deprecated models discoverable so the
+            // user can select them (e.g. opencode's "Ox Alpha Free" / `ox-alpha-free`).
+            // They are shown as experimental/deprecated in the selector and Auto can
+            // still apply capability, credential, health, and quota eligibility checks
+            // before selecting one. Deprecated models are no longer dropped here.
             if (
               (configProvider?.blacklist && configProvider.blacklist.includes(modelID)) ||
               (configProvider?.whitelist && !configProvider.whitelist.includes(modelID))

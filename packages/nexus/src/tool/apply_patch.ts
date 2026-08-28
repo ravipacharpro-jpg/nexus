@@ -1,6 +1,7 @@
 import * as path from "path"
 import { Effect, Schema } from "effect"
 import * as Tool from "./tool"
+import { ToolFailure } from "@nexus-ai/llm"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Watcher } from "@nexus-ai/core/filesystem/watcher"
 import { InstanceState } from "@/effect/instance-state"
@@ -140,7 +141,7 @@ export const ApplyPatchTool = Tool.define(
             }
 
             const movePath = hunk.move_path ? path.resolve(instance.directory, hunk.move_path) : undefined
-            yield* assertExternalDirectoryEffect(ctx, movePath)
+            if (movePath) yield* assertExternalDirectoryEffect(ctx, movePath)
 
             fileChanges.push({
               filePath,
@@ -307,7 +308,9 @@ export const ApplyPatchTool = Tool.define(
       description: DESCRIPTION,
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
-        run(params, ctx).pipe(Effect.orDie),
+        run(params, ctx).pipe(
+          Effect.mapError((error) => new ToolFailure({ message: error instanceof Error ? error.message : String(error) })),
+        ),
     }
   }),
 )
