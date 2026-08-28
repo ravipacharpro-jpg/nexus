@@ -83,7 +83,9 @@ for target in "${targets[@]}"; do
 		(( match == 1 )) || continue
 	fi
 	dir="packages/$name"
-	if [[ ! -d "$dir/node_modules" ]]; then
+	# Bun hoists workspace deps to the repo-root node_modules, so a package may
+	# have no local node_modules dir. Skip only when neither exists.
+	if [[ ! -d "$dir/node_modules" && ! -d "node_modules" ]]; then
 		results+=("SKIP  $name (node_modules absent)")
 		continue
 	fi
