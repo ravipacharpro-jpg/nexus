@@ -14,12 +14,14 @@
     "dev:storybook": "bun --cwd packages/storybook storybook",
     "lint": "oxlint",
     "typecheck": "bun turbo typecheck",
+    "typecheck:lowmem": "bun turbo typecheck --concurrency=1",
     "upgrade-opentui": "bun run script/upgrade-opentui.ts",
     "postinstall": "bun run --cwd packages/core fix-node-pty",
     "prepare": "husky",
     "random": "echo 'Random script'",
     "sso": "aws sso login --sso-session=nexus --no-browser",
     "translate:app": "bun run script/translate-app.ts",
+    "test:lowmem": "bash script/test-lowmem.sh",
     "test": "echo 'do not run tests from root' && exit 1"
   },
   "workspaces": {

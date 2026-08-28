@@ -20,7 +20,7 @@ import { Auth } from "@/auth"
 import { Config } from "@/config/config"
 import { Env } from "../../src/env"
 import { Plugin } from "../../src/plugin/index"
-import { Provider } from "@/provider/provider"
+import { Provider, defaultModelIDs } from "@/provider/provider"
 
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Filesystem } from "@/util/filesystem"
@@ -81,6 +81,15 @@ const providerLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
   )
 
 const list = Provider.use.list()
+
+test("default model map skips providers whose catalog has no valid models", () => {
+  expect(
+    defaultModelIDs({
+      empty: { models: {} },
+      populated: { models: { first: { id: "first" } } },
+    }),
+  ).toEqual({ populated: "first" })
+})
 
 const paid = (providers: Record<string, { models: Record<string, { cost: { input: number } }> }>) => {
   const item = providers[ProviderV2.ID.make("nexus")]
@@ -233,11 +242,11 @@ it.instance(
 )
 
 it.instance(
-  "filters alpha provider models by default",
+  "keeps accessible alpha provider models discoverable by default",
   Effect.gen(function* () {
     const providers = yield* list
     expect(providers[ProviderV2.ID.make("custom-provider")].models["active-model"]).toBeDefined()
-    expect(providers[ProviderV2.ID.make("custom-provider")].models["alpha-model"]).toBeUndefined()
+    expect(providers[ProviderV2.ID.make("custom-provider")].models["alpha-model"]).toBeDefined()
   }),
   { config: alphaProviderConfig },
 )
@@ -1601,11 +1610,30 @@ test("public provider info omits invalid models", () => {
     id: ModelV2.ID.make("invalid"),
     cost: { ...provider.models.valid.cost, input: Number.NaN },
   }
+  provider.models.malformed = {
+    ...provider.models.valid,
+    id: ModelV2.ID.make("malformed"),
+    capabilities: { ...provider.models.valid.capabilities, input: undefined },
+  } as unknown as Model
 
   const result = Provider.toPublicInfo(provider)
 
   expect(result.models.valid).toBeDefined()
   expect(result.models.invalid).toBeUndefined()
+  expect(result.models.malformed).toBeUndefined()
+})
+
+test("public provider info tolerates a missing models record", () => {
+  const provider = {
+    id: ProviderV2.ID.make("test"),
+    name: "Test",
+    source: "custom",
+    env: [],
+    options: {},
+    models: undefined,
+  } as unknown as Provider.Info
+
+  expect(Provider.toPublicInfo(provider).models).toEqual({})
 })
 
 it.instance("model variants are generated for reasoning models", () =>

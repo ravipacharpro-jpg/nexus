@@ -79,7 +79,12 @@ export function DialogModel(props: { providerID?: string }) {
               : undefined,
             category: connected() ? provider.name : undefined,
             disabled: provider.id === "nexus" && model.includes("-nano"),
-            footer: info.cost?.input === 0 && provider.id === "nexus" ? "Free" : undefined,
+            footer:
+              info.status === "alpha"
+                ? "Experimental"
+                : info.cost?.input === 0 && provider.id === "nexus"
+                  ? "Free"
+                  : undefined,
             onSelect() {
               onSelect(provider.id, model)
             },
@@ -116,17 +121,34 @@ export function DialogModel(props: { providerID?: string }) {
         )
       : []
 
+    const autoOption =
+      connected() && !props.providerID && showSections
+        ? [
+            {
+              value: { providerID: "auto", modelID: "auto" },
+              title: `Auto${local.model.isAuto() ? " (on)" : ""}`,
+              description: "Task-aware, token-saving routing with safe fallback",
+              category: "Mode",
+              footer: local.model.isAuto() ? "Active · token-saving" : "Task-aware",
+              onSelect: () => {
+                local.model.setAuto(true)
+                dialog.clear()
+              },
+            },
+          ]
+        : []
+
     if (needle) {
+      const matches = fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj)
+      const autoMatch = "auto".includes(needle.toLowerCase()) ? autoOption : []
       return [
-        ...sortModelOptions(
-          fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj),
-          false,
-        ),
+        ...autoMatch,
+        ...sortModelOptions(matches, false),
         ...fuzzysort.go(needle, popularProviders, { keys: ["title"] }).map((x) => x.obj),
       ]
     }
 
-    return [...favoriteOptions, ...recentOptions, ...providerOptions, ...popularProviders]
+    return [...autoOption, ...favoriteOptions, ...recentOptions, ...providerOptions, ...popularProviders]
   })
 
   const provider = createMemo(() =>

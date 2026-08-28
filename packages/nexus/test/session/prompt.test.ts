@@ -309,10 +309,7 @@ const writeText = Effect.fn("test.writeText")(function* (file: string, text: str
 })
 
 const writeConfig = Effect.fn("test.writeConfig")(function* (dir: string, config: Partial<ConfigV1.Info>) {
-  yield* writeText(
-    path.join(dir, "nexus.json"),
-    JSON.stringify({ $schema: "https://nexus.ai/config.json", ...config }),
-  )
+  yield* writeText(path.join(dir, "nexus.json"), JSON.stringify({ $schema: "https://nexus.ai/config.json", ...config }))
 })
 
 const useServerConfig = Effect.fn("test.useServerConfig")(function* (config: (url: string) => Partial<ConfigV1.Info>) {
@@ -536,6 +533,7 @@ it.instance("loop calls LLM and returns assistant message", () =>
     const sessions = yield* Session.Service
     const chat = yield* sessions.create({
       title: "Pinned",
+      model: { id: ref.modelID, providerID: ref.providerID },
       permission: [{ permission: "*", pattern: "*", action: "allow" }],
     })
     yield* prompt.prompt({
@@ -626,6 +624,49 @@ it.instance("legacy prompt emits message events without session.next events", ()
     expect(seen).toContain(MessageV2.Event.PartUpdated.type)
     expect(seen.filter((type) => type.startsWith("session.next."))).toEqual([])
   }),
+)
+
+it.instance(
+  "Master prompt dispatches specialists and returns one verified parent result",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig(providerCfg)
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const instance = yield* TestInstance
+      const chat = yield* sessions.create({
+        title: "Master integration",
+        model: { id: ref.modelID, providerID: ref.providerID },
+        agent: "master",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      yield* llm.text("Changed files: src/example.ts\nVerification: local coder check passed")
+      yield* llm.text("Changed files: none\nVerification: reviewer found no blocking issues")
+      yield* llm.text("Changed files: none\nVerification: test suite passed")
+
+      const result = yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "master",
+        model: ref,
+        parts: [{ type: "text", text: "Fix the bug in this project" }],
+      })
+      expect(result.info.role).toBe("assistant")
+      expect(result.parts.some((part) => part.type === "text" && part.text.includes("Master Agent completed"))).toBe(
+        true,
+      )
+      expect(result.parts.some((part) => part.type === "text" && part.text.includes("coder: completed"))).toBe(true)
+      expect(result.parts.some((part) => part.type === "text" && part.text.includes("tester: completed"))).toBe(true)
+
+      const state = JSON.parse(
+        yield* Effect.promise(() =>
+          Bun.file(path.join(instance.directory, ".nexus", `master-session-${chat.id}.json`)).text(),
+        ),
+      )
+      expect(state.status).toBe("completed")
+      expect(state.steps).toHaveLength(3)
+    }),
+  { config: cfg },
 )
 
 it.instance("loop surfaces content-filter finishes as session errors", () =>
@@ -761,6 +802,7 @@ it.instance("static loop returns assistant text through local provider", () =>
     const sessions = yield* Session.Service
     const session = yield* sessions.create({
       title: "Prompt provider",
+      model: { id: ref.modelID, providerID: ref.providerID },
       permission: [{ permission: "*", pattern: "*", action: "allow" }],
     })
 
@@ -1716,6 +1758,7 @@ it.instance(
       const sessions = yield* Session.Service
       const chat = yield* sessions.create({
         title: "Pinned",
+        model: { id: ref.modelID, providerID: ref.providerID },
         permission: [{ permission: "*", pattern: "*", action: "allow" }],
       })
       yield* llm.text("after-shell")
