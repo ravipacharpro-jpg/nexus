@@ -16,7 +16,10 @@ Playwright hard-blocks `process.platform === "android"`, so its Chromium cannot 
 
 - `proot-distro` Ubuntu installed; `node` + `npm` present.
 - Inside Ubuntu: `npm i -g @playwright/mcp`, `playwright install chromium`, apt deps installed.
-- `.nexus/opencode.jsonc` has the `playwright` MCP server (headless, proot wrapper). The server auto-starts when NEXUS starts. Config also enables `--mobile` (lighter, phone-like pages that save tokens) and `--warmup` (Chromium pre-launched after the MCP init handshake, so the agent's first real navigation is instant).
+- **This NEXUS build reads MCP servers from `~/.config/nexus/nexus.jsonc` (via `nexus mcp add`), NOT from `.nexus/opencode.jsonc`.** The playwright server is already added there. To (re)configure it reproducibly from this repo, run:
+  - `bash .nexus/scripts/setup-browser-mcp.sh`
+  This runs `nexus mcp add playwright -- node .nexus/scripts/browser-mcp-launcher.mjs --browser chromium --no-sandbox --headless --mobile --warmup`.
+- `.nexus/opencode.jsonc` also carries the `playwright` entry for source builds; it is ignored by the installed binary.
 - Self-healing: `.nexus/scripts/browser-mcp-launcher.mjs` runs `.nexus/scripts/ensure-browser-env.sh` automatically on Android at startup. If the Ubuntu container or Chromium is ever missing/wiped, the launcher reinstalls it idempotently — no manual `proot-distro` steps needed. Run the script by hand only to force a rebuild: `bash .nexus/scripts/ensure-browser-env.sh`.
 
 ## Usage
