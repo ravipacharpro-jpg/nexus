@@ -15,7 +15,7 @@
   "mcp": {
     "playwright": {
       "type": "local",
-      "command": ["node", ".nexus/scripts/browser-mcp-launcher.mjs", "--browser", "chromium", "--no-sandbox", "--headless"],
+      "command": ["node", ".nexus/scripts/browser-mcp-launcher.mjs", "--browser", "chromium", "--no-sandbox", "--headless", "--mobile", "--warmup"],
       "enabled": true,
       "timeout": 30000,
     },

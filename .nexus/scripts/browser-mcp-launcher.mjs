@@ -6,10 +6,18 @@
 //     so Playwright's Chromium actually runs). A one-time bootstrap installs Ubuntu + Chromium there.
 //   - Windows / macOS / Linux desktop: directly via `npx -y @playwright/mcp` (auto-installs).
 // All CLI args from the NEXUS mcp config are forwarded unchanged.
+//
+// Launcher-only flag (stripped before forwarding to the server):
+//   --warmup   After the MCP initialize handshake, pre-launch Chromium by navigating to
+//              about:blank, so the agent's first real navigation is instant. Harmless if it fails.
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
+const WARMUP = args.includes("--warmup");
+const serverArgs = args.filter((a) => a !== "--warmup");
+
+const WARMUP_ID = 990001;
 
 function isAndroid() {
   if (process.platform === "android") return true;
@@ -20,12 +28,67 @@ function isAndroid() {
   }
 }
 
+// Proxy the MCP stdio channel between NEXUS (parent) and the Playwright MCP server (child).
+// When WARMUP is on, after the first `initialize` request we inject a throwaway
+// `browser_navigate about:blank` and swallow its response, pre-launching Chromium.
 function launch(cmd, cmdArgs) {
-  const child = spawn(cmd, cmdArgs, { stdio: "inherit" });
+  const child = spawn(cmd, cmdArgs, { stdio: ["pipe", "pipe", "pipe"] });
+  child.stderr.pipe(process.stderr);
+
+  let warmupSent = false;
+
+  // child stdout -> parent stdout (drop the warmup response)
+  let cout = "";
+  child.stdout.on("data", (d) => {
+    cout += d.toString();
+    let i;
+    while ((i = cout.indexOf("\n")) >= 0) {
+      const line = cout.slice(0, i).replace(/\r$/, "");
+      cout = cout.slice(i + 1);
+      if (!line.trim()) continue;
+      try {
+        const msg = JSON.parse(line);
+        if (msg.id === WARMUP_ID) continue;
+      } catch {}
+      process.stdout.write(line + "\n");
+    }
+  });
+
   child.on("exit", (code) => process.exit(code ?? 0));
   child.on("error", (err) => {
     console.error("browser-mcp-launcher: failed to start", cmd, cmdArgs.join(" "), err.message);
     process.exit(1);
+  });
+
+  // parent stdin -> child stdin (inject warmup after first initialize)
+  let pin = "";
+  process.stdin.resume();
+  process.stdin.on("data", (d) => {
+    pin += d.toString();
+    let i;
+    while ((i = pin.indexOf("\n")) >= 0) {
+      const line = pin.slice(0, i).replace(/\r$/, "");
+      pin = pin.slice(i + 1);
+      if (!line.trim()) continue;
+      child.stdin.write(line + "\n");
+      if (WARMUP && !warmupSent) {
+        try {
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") {
+            warmupSent = true;
+            child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) + "\n");
+            child.stdin.write(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: WARMUP_ID,
+                method: "tools/call",
+                params: { name: "browser_navigate", arguments: { url: "about:blank" } }
+              }) + "\n"
+            );
+          }
+        } catch {}
+      }
+    }
   });
 }
 
@@ -54,8 +117,8 @@ if (isAndroid()) {
     bin = "playwright-mcp";
     binArgs = [];
   }
-  launch("proot-distro", ["login", "ubuntu", "--", bin, ...binArgs, ...args]);
+  launch("proot-distro", ["login", "ubuntu", "--", bin, ...binArgs, ...serverArgs]);
 } else {
   // Desktop (win32/darwin/linux): run directly.
-  launch("npx", ["-y", "@playwright/mcp", ...args]);
+  launch("npx", ["-y", "@playwright/mcp", ...serverArgs]);
 }

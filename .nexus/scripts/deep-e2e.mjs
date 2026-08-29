@@ -5,7 +5,7 @@ import { spawn } from "node:child_process"
 import { appendFileSync } from "node:fs"
 
 const LAUNCHER = new URL("./browser-mcp-launcher.mjs", import.meta.url).pathname
-const args = ["--browser", "chromium", "--no-sandbox", "--headless"]
+const args = ["--browser", "chromium", "--no-sandbox", "--headless", ...process.argv.slice(2)]
 
 const child = spawn("node", [LAUNCHER, ...args], { stdio: ["pipe", "pipe", "pipe"] })
 

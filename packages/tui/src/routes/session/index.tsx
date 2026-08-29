@@ -1584,6 +1584,17 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
 
   return (
     <>
+      <box flexDirection="row" alignItems="center" gap={1} paddingTop={1} paddingLeft={3}>
+        <text>
+          <span style={{ bg: local.agent.color(props.message.agent), fg: theme.background }}> Agent </span>
+        </text>
+        <Show when={ctx.showTimestamps()}>
+          <text fg={theme.textMuted}>{Locale.todayTimeOrDateTime(props.message.time.created)}</text>
+        </Show>
+        <Show when={model()}>
+          <text fg={theme.textMuted}>{model()}</text>
+        </Show>
+      </box>
       <Show when={quiet()}>
         <box paddingLeft={3} paddingTop={1}>
           <Spinner color={local.agent.color(props.message.agent)}>Working...</Spinner>
