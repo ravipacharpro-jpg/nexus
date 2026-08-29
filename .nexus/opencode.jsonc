@@ -1,20 +1,56 @@
 {
   "$schema": "https://nexus.ai/config.json",
-  "provider": {},
+  "provider": {
+    "opencode": {
+      "name": "OpenCode (keyless free gateway)",
+      "api": "https://opencode.ai/zen/v1",
+      "npm": "@ai-sdk/openai-compatible",
+      "env": []
+    },
+    "openrouter": {
+      "name": "OpenRouter",
+      "api": "https://openrouter.ai/api/v1",
+      "npm": "@openrouter/ai-sdk-provider",
+      "env": ["OPENROUTER_API_KEY"]
+    },
+    "offline": {
+      "name": "Offline Local LLM (llama.cpp / Ollama)",
+      "api": "http://localhost:8080/v1",
+      "npm": "@ai-sdk/openai-compatible",
+      "env": [],
+      "models": {
+        "local/auto": {
+          "id": "local/auto",
+          "name": "On-device GGUF model (no API, no internet)",
+          "reasoning": false,
+          "tool_call": true,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "model": "opencode/hy3-free",
   "permission": {},
   "references": {
     "effect": {
       "repository": "github.com/Effect-TS/effect-smol",
-      "description": "Use for Effect v4 and effect-smol implementation details",
+      "description": "Use for Effect v4 and effect-smol implementation details"
     },
     "nexus-local": {
       "path": "~/.local/share/nexus",
-      "description": "Contains nexus logs and data",
-    },
+      "description": "Contains nexus logs and data"
+    }
   },
   "mcp": {},
   "tools": {
     "github-triage": false,
-    "github-pr-search": false,
-  },
+    "github-pr-search": false
+  }
 }
