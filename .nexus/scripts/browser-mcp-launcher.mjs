@@ -7,6 +7,7 @@
 //   - Windows / macOS / Linux desktop: directly via `npx -y @playwright/mcp` (auto-installs).
 // All CLI args from the NEXUS mcp config are forwarded unchanged.
 import { spawn, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
 
@@ -29,17 +30,30 @@ function launch(cmd, cmdArgs) {
 }
 
 if (isAndroid()) {
-  // Termux/Android: run inside Ubuntu proot. Prefer the global bin; fall back to npx.
+  // Termux/Android: self-heal only if the environment looks incomplete, so normal
+  // startup stays fast (no apt/network on every launch).
+  const ready = spawnSync(
+    "proot-distro",
+    ["login", "ubuntu", "--", "bash", "-c", "command -v playwright-mcp >/dev/null && test -n \"$(ls -d $HOME/.cache/ms-playwright/chromium* 2>/dev/null)\""],
+    { stdio: "ignore" }
+  ).status === 0;
+  if (!ready) {
+    const ensureScript = fileURLToPath(new URL("./ensure-browser-env.sh", import.meta.url));
+    console.error("browser-mcp-launcher: browser env incomplete, running ensure-browser-env.sh ...");
+    const ensureResult = spawnSync("bash", [ensureScript], { stdio: "inherit" });
+    if (ensureResult.status !== 0) {
+      console.error("browser-mcp-launcher: ensure-browser-env.sh failed; attempting to start server anyway.");
+    }
+  }
+  // Prefer the global bin; fall back to npx.
   let bin = "npx";
   let binArgs = ["-y", "@playwright/mcp"];
-  try {
-    const r = spawnSync("proot-distro", ["login", "ubuntu", "--", "bash", "-c", "command -v playwright-mcp"], { encoding: "utf8" });
-    const found = (r.stdout || "").trim();
-    if (found) {
-      bin = "playwright-mcp";
-      binArgs = [];
-    }
-  } catch {}
+  const r = spawnSync("proot-distro", ["login", "ubuntu", "--", "bash", "-c", "command -v playwright-mcp"], { encoding: "utf8" });
+  const found = (r.stdout || "").trim();
+  if (found) {
+    bin = "playwright-mcp";
+    binArgs = [];
+  }
   launch("proot-distro", ["login", "ubuntu", "--", bin, ...binArgs, ...args]);
 } else {
   // Desktop (win32/darwin/linux): run directly.
