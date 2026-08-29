@@ -24,14 +24,14 @@ Playwright hard-blocks `process.platform === "android"`, so its Chromium cannot 
 Tools exposed: `browser_navigate`, `browser_click`, `browser_type`, `browser_fill_form`, `browser_snapshot`, `browser_take_screenshot`, `browser_tabs`, `browser_handle_dialog`, `browser_wait_for`, `browser_evaluate`, etc.
 
 1. **Autonomous browsing (no user action):** `browser_navigate` → `browser_snapshot`/`browser_take_screenshot` → `browser_click`/`browser_type`. Fully headless; the user does nothing.
-2. **Login / captcha (minimal user action — hybrid):**
-   - When a login/OAuth screen appears, the agent opens that exact URL in the user's **real phone browser**:
-     - Termux: `termux-open "<url>"` (or `am start -a android.intent.action.VIEW -d "<url>"`).
-   - The user taps "Sign in" / "Continue with Google" / solves captcha in their normal phone browser.
-   - The agent continues via **token / API**, not by reading the phone browser's session:
-     - **GitHub:** the `gh` CLI is already authenticated — use `gh api ...` / `gh auth status`. No browser login needed for GitHub at all.
-     - **Other sites:** ask the user to generate a personal access token / session cookie and paste it; the agent then uses it via `curl` / `webfetch` / API calls.
-   - Do NOT attempt to bypass captcha/OAuth or phish credentials.
+2. **Login / captcha (automatic hybrid handoff — zero agent guesswork):**
+    - The launcher **auto-detects** login/OAuth/captcha URLs (patterns like `/login`, `/oauth`, `captcha`, `sso`, `account`, `consent`, `callback`) whenever the agent calls `browser_navigate`, and **opens that exact URL in the user's real phone/desktop browser** on the host via `termux-open` (Android) or `xdg-open`/`open` (desktop). A log line is printed so the user knows. The headless Chromium still navigates too, so the agent can inspect the page.
+    - The user taps "Sign in" / "Continue with Google" / solves captcha in their normal phone browser.
+    - The agent continues via **token / API**, not by reading the phone browser's session:
+      - **GitHub:** the `gh` CLI is already authenticated — use `gh api ...` / `gh auth status`. No browser login needed for GitHub at all.
+      - **Other sites:** ask the user to generate a personal access token / session cookie and paste it; the agent then uses it via `curl` / `webfetch` / API calls.
+    - If a login link is found only inside page text (not via `browser_navigate`), the agent can call `.nexus/scripts/phone-open.sh "<url>"` directly.
+    - Do NOT attempt to bypass captcha/OAuth or phish credentials.
 
 ## Rules
 

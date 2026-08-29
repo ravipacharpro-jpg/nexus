@@ -19,6 +19,25 @@ const serverArgs = args.filter((a) => a !== "--warmup");
 
 const WARMUP_ID = 990001;
 
+// Auto handoff: when the agent navigates to a login/OAuth/captcha URL, open it in
+// the user's REAL phone/desktop browser so they can authenticate there, with zero
+// agent guesswork. Heuristic only (URL patterns) — never blocks the headless flow.
+const AUTH_URL_RE = /login|signin|sign-in|oauth|auth|account|sso|consent|captcha|callback|connect/i;
+function isAuthUrl(url) {
+  if (!url || /^data:|^about:/.test(url)) return false;
+  return AUTH_URL_RE.test(url);
+}
+function openInPhoneBrowser(url) {
+  console.error("browser-mcp-launcher: auth URL detected -> opening in your real browser for login: " + url);
+  if (isAndroid()) {
+    spawn("termux-open", [url], { detached: true, stdio: "ignore" }).unref();
+    return;
+  }
+  if (process.platform === "linux") spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+  else if (process.platform === "darwin") spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+  else if (process.platform === "win32") spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
+}
+
 function isAndroid() {
   if (process.platform === "android") return true;
   try {
@@ -36,6 +55,7 @@ function launch(cmd, cmdArgs) {
   child.stderr.pipe(process.stderr);
 
   let warmupSent = false;
+  const openedAuthUrls = new Set();
 
   // child stdout -> parent stdout (drop the warmup response)
   let cout = "";
@@ -88,6 +108,17 @@ function launch(cmd, cmdArgs) {
           }
         } catch {}
       }
+      // Auto handoff for login/OAuth/captcha URLs.
+      try {
+        const msg = JSON.parse(line);
+        if (msg.method === "tools/call" && msg.params && msg.params.name === "browser_navigate") {
+          const url = (msg.params.arguments && msg.params.arguments.url) || "";
+          if (isAuthUrl(url) && !openedAuthUrls.has(url)) {
+            openedAuthUrls.add(url);
+            openInPhoneBrowser(url);
+          }
+        }
+      } catch {}
     }
   });
 }
