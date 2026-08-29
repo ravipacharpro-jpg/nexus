@@ -1505,9 +1505,17 @@ function UserMessage(props: {
             paddingTop={1}
             paddingBottom={1}
             paddingLeft={2}
-            backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+            backgroundColor={theme.backgroundElement}
             flexShrink={0}
           >
+            <box flexDirection="row" alignItems="center" gap={1} marginBottom={text() ? 1 : 0}>
+              <text>
+                <span style={{ bg: theme.secondary, fg: theme.background }}> You </span>
+              </text>
+              <Show when={ctx.showTimestamps()}>
+                <text fg={theme.textMuted}>{Locale.todayTimeOrDateTime(props.message.time.created)}</text>
+              </Show>
+            </box>
             <text fg={theme.text}>{text()}</text>
             <Show when={files().length}>
               <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
@@ -1525,13 +1533,6 @@ function UserMessage(props: {
                   }}
                 </For>
               </box>
-            </Show>
-            <Show when={ctx.showTimestamps()}>
-              <text fg={theme.textMuted}>
-                <span style={{ fg: theme.textMuted }}>
-                  {Locale.todayTimeOrDateTime(props.message.time.created)}
-                </span>
-              </text>
             </Show>
           </box>
         </box>
