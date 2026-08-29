@@ -37,7 +37,6 @@ export class RotationEngine {
     if (eligibleValues.length === 0) return undefined
 
     const position = this.positions.get(providerID) ?? 0
-    const now = Date.now()
 
     // Rotate deterministically over the eligible set. The cursor is indexed into
     // `eligibleValues` (not the full key list) so changes in the eligible set

@@ -523,7 +523,7 @@ install_command_alias() {
     if [ "$is_termux" = "true" ] && [ -n "${PREFIX:-}" ]; then
         alias_dirs+=("$PREFIX/bin" "$HOME/.local/bin")
     else
-        alias_dirs+=("$HOME/.local/bin")
+        alias_dirs+=("$HOME/.local/bin" "/usr/local/bin")
     fi
 
     # Also repair stale launchers in any writable PATH directory. This matters
@@ -541,6 +541,16 @@ install_command_alias() {
             fi
         fi
     done
+    # Guarantee the launcher is visible in the CURRENT shell: link into the
+    # first writable directory already on $PATH. This covers env quirks where
+    # $PREFIX/bin / $HOME/.local/bin are not yet on PATH, so `nexus` works
+    # immediately without reloading the shell.
+    for path_dir in ${PATH:-}; do
+        if [[ -n "$path_dir" && -d "$path_dir" && -w "$path_dir" ]]; then
+            alias_dirs+=("$path_dir")
+            break
+        fi
+    done
     IFS="$old_ifs"
 
     local seen="|"
@@ -549,12 +559,19 @@ install_command_alias() {
             *"|$alias_dir|"*) continue ;;
         esac
         seen="${seen}${alias_dir}|"
-        mkdir -p "$alias_dir"
-        rm -f "$alias_dir/nexus" "$alias_dir/nx" "$alias_dir/devhub" "$alias_dir/opencode"
-        ln -s "$INSTALL_DIR/nexus" "$alias_dir/nexus"
-        ln -s "$INSTALL_DIR/nexus" "$alias_dir/nx"
-        ln -s "$INSTALL_DIR/nexus" "$alias_dir/devhub"
-        ln -s "$INSTALL_DIR/nexus" "$alias_dir/opencode"
+        if ! mkdir -p "$alias_dir" 2>/dev/null; then
+            sudo mkdir -p "$alias_dir" 2>/dev/null || continue
+        fi
+        if ln -sf "$INSTALL_DIR/nexus" "$alias_dir/nexus" 2>/dev/null; then
+            ln -sf "$INSTALL_DIR/nexus" "$alias_dir/nx" 2>/dev/null
+            ln -sf "$INSTALL_DIR/nexus" "$alias_dir/devhub" 2>/dev/null
+            ln -sf "$INSTALL_DIR/nexus" "$alias_dir/opencode" 2>/dev/null
+        else
+            sudo ln -sf "$INSTALL_DIR/nexus" "$alias_dir/nexus" 2>/dev/null
+            sudo ln -sf "$INSTALL_DIR/nexus" "$alias_dir/nx" 2>/dev/null
+            sudo ln -sf "$INSTALL_DIR/nexus" "$alias_dir/devhub" 2>/dev/null
+            sudo ln -sf "$INSTALL_DIR/nexus" "$alias_dir/opencode" 2>/dev/null
+        fi
     done
 }
 

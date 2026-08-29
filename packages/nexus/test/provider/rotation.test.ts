@@ -120,7 +120,7 @@ describe("preferred defaults", () => {
 
     expect(PREFERRED_MODELS.groq).toContain("openai/gpt-oss-120b")
     expect(PREFERRED_MODELS.groq).not.toContain("llama-3.1-8b-instant")
-    expect(PREFERRED_MODELS.google).toContain("gemini-3.6-flash")
+    expect(PREFERRED_MODELS.google).toContain("gemini-2.5-flash")
     expect(PREFERRED_MODELS.google).not.toContain("gemini-3.1-flash-tts-preview")
   })
 })
@@ -128,8 +128,8 @@ describe("preferred defaults", () => {
 describe("legacy model aliases", () => {
   test("resolve to current text-chat defaults", () => {
     expect(MODEL_MAP.llama3_1.providerModels.groq).toBe("openai/gpt-oss-120b")
-    expect(MODEL_MAP.gemini.providerModels.gemini).toBe("gemini-3.6-flash")
-    expect(MODEL_MAP.gemini.providerModels.openrouter).toBe("google/gemini-3.6-flash")
+    expect(MODEL_MAP.gemini.providerModels.gemini).toBe("gemini-2.5-flash")
+    expect(MODEL_MAP.gemini.providerModels.openrouter).toBe("google/gemini-2.5-flash")
   })
 })
 

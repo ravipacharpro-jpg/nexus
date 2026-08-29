@@ -27,8 +27,8 @@ export const MODEL_MAP = {
   gemini: {
     providers: ["gemini", "openrouter"] as const,
     providerModels: {
-      gemini: "gemini-3.6-flash",
-      openrouter: "google/gemini-3.6-flash",
+      gemini: "gemini-2.5-flash",
+      openrouter: "google/gemini-2.5-flash",
     },
   },
   gpt4: {
