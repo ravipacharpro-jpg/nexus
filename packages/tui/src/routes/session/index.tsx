@@ -1505,9 +1505,17 @@ function UserMessage(props: {
             paddingTop={1}
             paddingBottom={1}
             paddingLeft={2}
-            backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+            backgroundColor={theme.backgroundElement}
             flexShrink={0}
           >
+            <box flexDirection="row" alignItems="center" gap={1} marginBottom={text() ? 1 : 0}>
+              <text>
+                <span style={{ bg: theme.secondary, fg: theme.background }}> You </span>
+              </text>
+              <Show when={ctx.showTimestamps()}>
+                <text fg={theme.textMuted}>{Locale.todayTimeOrDateTime(props.message.time.created)}</text>
+              </Show>
+            </box>
             <text fg={theme.text}>{text()}</text>
             <Show when={files().length}>
               <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
@@ -1525,13 +1533,6 @@ function UserMessage(props: {
                   }}
                 </For>
               </box>
-            </Show>
-            <Show when={ctx.showTimestamps()}>
-              <text fg={theme.textMuted}>
-                <span style={{ fg: theme.textMuted }}>
-                  {Locale.todayTimeOrDateTime(props.message.time.created)}
-                </span>
-              </text>
             </Show>
           </box>
         </box>
@@ -1583,6 +1584,17 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
 
   return (
     <>
+      <box flexDirection="row" alignItems="center" gap={1} paddingTop={1} paddingLeft={3}>
+        <text>
+          <span style={{ bg: local.agent.color(props.message.agent), fg: theme.background }}> Agent </span>
+        </text>
+        <Show when={ctx.showTimestamps()}>
+          <text fg={theme.textMuted}>{Locale.todayTimeOrDateTime(props.message.time.created)}</text>
+        </Show>
+        <Show when={model()}>
+          <text fg={theme.textMuted}>{model()}</text>
+        </Show>
+      </box>
       <Show when={quiet()}>
         <box paddingLeft={3} paddingTop={1}>
           <Spinner color={local.agent.color(props.message.agent)}>Working...</Spinner>

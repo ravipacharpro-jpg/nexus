@@ -12,7 +12,14 @@
       "description": "Contains nexus logs and data",
     },
   },
-  "mcp": {},
+  "mcp": {
+    "playwright": {
+      "type": "local",
+      "command": ["node", ".nexus/scripts/browser-mcp-launcher.mjs", "--browser", "chromium", "--no-sandbox", "--headless", "--mobile", "--warmup"],
+      "enabled": true,
+      "timeout": 30000,
+    },
+  },
   "tools": {
     "github-triage": false,
     "github-pr-search": false,
