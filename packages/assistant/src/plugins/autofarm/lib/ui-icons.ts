@@ -259,3 +259,75 @@ export function paintTyping(animFrame = 0): string {
   const dots = ANIM_FRAMES.dots[Math.floor(animFrame / 100) % ANIM_FRAMES.dots.length]
   return `[${COLORS.accent}]${dots}[/${COLORS.accent}] [dim ${COLORS.secondary}]agent is thinking...[/dim ${COLORS.secondary}]`
 }
+
+// ── Premium icon set (Phase 2: enhanced features) ──────────────────
+export const PREMIUM_ICONS: Record<string, string> = {
+  history: "↺",
+  tab: "⇥",
+  sound: "♪",
+  alert: "◉",
+  clock: "◴",
+  money: "¤",
+  calendar: "▦",
+  fire_alert: "✸",
+  check_circle: "✓",
+  bell: "♫",
+  expand: "▰",
+  collapse: "▱",
+  archive: "❏",
+  lightbulb: "✦",
+  rocket: "➤",
+  bell_ringing: "◉",
+  arrow_up: "▴",
+  arrow_down: "▾",
+  arrow_left: "◂",
+  arrow_right: "▸",
+  thumb_up: "▲",
+  thumb_down: "▼",
+}
+
+// Spinner variants (Phase 2: extended)
+export const SPINNER_VARIANTS: Record<string, string[]> = {
+  spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+  spinner2: ["⣀", "⣄", "⣤", "⣦", "⣶", "⣷", "⣯", "⣟", "⡿", "⢿", "⣻", "⣽", "⣾", "⣷"],
+  dots: ["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"],
+  pulse: ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"],
+  wave: ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "▆", "▅", "▄", "▃", "▂"],
+  circle: ["◐", "◓", "◑", "◒"],
+  triangle: ["◢", "◣", "◤", "◥"],
+  fill: ["▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"],
+}
+
+/** Get spinner frame at time t (cycles). */
+export function spinnerFrame2(name: keyof typeof SPINNER_VARIANTS, t: number): string {
+  const frames = SPINNER_VARIANTS[name]
+  if (!frames) return "•"
+  return frames[Math.floor(t / 100) % frames.length]
+}
+
+/** Generate progress bar at 0..1. */
+export function progressBar2(percent: number, width = 20): string {
+  const filled = Math.max(0, Math.min(width, Math.round(percent * width)))
+  const empty = Math.max(0, width - filled)
+  return "█".repeat(filled) + "░".repeat(empty)
+}
+
+/** Tab completion suggestions for TUI. */
+export const TUI_COMMANDS: string[] = [
+  "status", "discover", "farm groq", "farm cerebras", "farm openrouter",
+  "farm deepseek", "farm mistral", "farm cohere", "farm perplexity",
+  "predict-ml", "queue", "queue list", "queue clear",
+  "reticle", "reticle status", "reticle check",
+  "cost today", "cost month", "cost all",
+  "supply status", "supply decide", "supply discover",
+  "memory stats", "memory search", "compress",
+  "encrypt", "decrypt", "stealth", "queue push",
+  "help", "clear", "history", "quit", "exit",
+]
+
+/** Tab completion matcher. */
+export function suggestCompletion(input: string): string | null {
+  if (!input.trim()) return null
+  const matches = TUI_COMMANDS.filter((c) => c.toLowerCase().startsWith(input.toLowerCase()))
+  return matches[0] ?? null
+}
