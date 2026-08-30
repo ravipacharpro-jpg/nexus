@@ -208,11 +208,100 @@ async function cmdLoop(ctx: PluginContext): Promise<number> {
   return 0
 }
 
+// ── Smart-upgrade commands ────────────────────────────────────────────
+
+async function cmdEncrypt(ctx: PluginContext): Promise<number> {
+  const { enableEncryption, isEncrypted } = await import("./lib/crypto-vault.ts")
+  if (isEncrypted()) {
+    ctx.out(`${Icon.info} vault already encrypted`)
+    return 0
+  }
+  const r = enableEncryption(ctx.args[0])
+  if (r.ok) ctx.out(`${Icon.success} vault encrypted → ${r.path}`)
+  else { ctx.err(r.reason); return 1 }
+  return 0
+}
+
+async function cmdDecrypt(ctx: PluginContext): Promise<number> {
+  const { disableEncryption, isEncrypted } = await import("./lib/crypto-vault.ts")
+  if (!isEncrypted()) {
+    ctx.out(`${Icon.info} vault not encrypted`)
+    return 0
+  }
+  const r = disableEncryption(ctx.args[0])
+  if (r.ok) ctx.out(`${Icon.success} vault decrypted → ${r.path}`)
+  else { ctx.err(r.reason); return 1 }
+  return 0
+}
+
+async function cmdStealth(ctx: PluginContext): Promise<number> {
+  const { newStealthProfile, humanTypingDelay } = await import("./lib/stealth.ts")
+  const p = newStealthProfile()
+  header("Stealth profile (this session)")
+  ctx.out(`  user-agent:  ${p.userAgent}`)
+  ctx.out(`  timezone:    ${p.timezone}`)
+  ctx.out(`  locale:      ${p.locale}`)
+  ctx.out(`  viewport:    ${p.viewport.width}×${p.viewport.height}`)
+  ctx.out(`  cpu/mem:     ${p.hardwareConcurrency} cores / ${p.deviceMemory} GB`)
+  ctx.out(`  speedFactor: ${p.speedFactor.toFixed(2)}`)
+  ctx.out(`  typing delay sample: ${Math.round(humanTypingDelay(p))}ms`)
+  return 0
+}
+
+async function cmdPredictMl(ctx: PluginContext): Promise<number> {
+  const { predictAll } = await import("./lib/predictor.ts")
+  const { listProviders } = await import("./agents/provider-agent.ts")
+  const { snapshot } = await import("./agents/monitor-agent.ts")
+  const mon = snapshot()
+  const catalog = listProviders()
+    .filter((p) => p.freePerDay && p.freePerDay > 0)
+    .map((p) => ({ id: p.id, freePerDay: p.freePerDay }))
+  const preds = predictAll(catalog, mon.usage)
+  header("ML-based predictions (next 14 days)")
+  for (const p of preds) {
+    const flag = p.anomalyScore > 2 ? " ⚠ anomaly" : ""
+    ctx.out(`  ${p.provider.padEnd(14)} used=${p.currentDaily} avg=${p.avgDaily} slope=${p.trendSlope} daysToExhaust=${p.daysToExhaust} conf=${p.confidence}${flag}`)
+  }
+  return 0
+}
+
+async function cmdPick(ctx: PluginContext): Promise<number> {
+  const { pickKeyForTask, topProvidersForTask } = await import("./lib/selector.ts")
+  const task = (ctx.args[0] ?? "any") as "code" | "chat" | "vision" | "long-context" | "any"
+  header(`Best provider for task: ${task}`)
+  for (const p of topProvidersForTask(task, 5)) {
+    ctx.out(`  ${p.provider.padEnd(14)} score=${p.taskScore} ${p.reasons.join("; ")}`)
+  }
+  const pick = pickKeyForTask(task)
+  if (pick) ctx.out(`\n  → selected ${pick.provider} (key masked in vault)`)
+  else ctx.out(`\n  ${Icon.warn} no healthy key for ${task}`)
+  return 0
+}
+
+async function cmdBrain(ctx: PluginContext): Promise<number> {
+  const { runBrain, buildPrompt } = await import("./agents/llm-brain.ts")
+  if (ctx.args[0] === "prompt") {
+    ctx.out(buildPrompt())
+    return 0
+  }
+  ctx.out(`${Icon.info} invoking LLM brain…`)
+  const d = await runBrain()
+  header("LLM brain decision")
+  ctx.out(`  action:    ${d.action}`)
+  ctx.out(`  urgency:   ${d.urgency}/5`)
+  ctx.out(`  providers: ${d.providers.join(", ") || "(none)"}`)
+  ctx.out(`  reason:    ${d.reason}`)
+  for (const t of d.tasks) {
+    ctx.out(`  task: ${t.task.padEnd(14)} → ${t.preferredProvider}  (${t.reason})`)
+  }
+  return 0
+}
+
 const plugin: NexusPlugin = {
   name: "autofarm",
-  version: "0.1.0",
-  description: "Autonomous API farmer: creates random Gmail accounts, farms free LLM API keys, and keeps your vault topped up.",
-  tags: ["autonomous", "api", "gmail", "farm", "free"],
+  version: "0.2.0",
+  description: "Autonomous API farmer: creates random Gmail accounts, farms free LLM API keys, keeps your vault topped up, and reasons about the best provider for each task.",
+  tags: ["autonomous", "api", "gmail", "farm", "free", "smart", "stealth"],
   commands: [
     { name: "start", describe: "start background loop", usage: "nexus autofarm start [intervalMs]", run: cmdStart },
     { name: "stop", describe: "stop background loop", usage: "nexus autofarm stop", run: cmdStop },
@@ -228,6 +317,13 @@ const plugin: NexusPlugin = {
     { name: "master", describe: "unified master report (in-process + python)", usage: "nexus autofarm master [--python] [--loop]", run: cmdMaster },
     { name: "python", describe: "drive the Python nexus-keyfarm subsystem", usage: "nexus autofarm python <status|auto|farm|test|demand|gmails|create N>", run: cmdPython },
     { name: "loop", describe: "start/stop/check the orchestrator loop", usage: "nexus autofarm loop [start [ms]|stop]", run: cmdLoop },
+    // ── Smart-upgrade commands ──
+    { name: "encrypt", describe: "encrypt the API vault with AES-256-GCM", usage: "nexus autofarm encrypt [passphrase]", run: cmdEncrypt },
+    { name: "decrypt", describe: "decrypt the API vault back to plaintext", usage: "nexus autofarm decrypt [passphrase]", run: cmdDecrypt },
+    { name: "stealth", describe: "show the current anti-detection profile", usage: "nexus autofarm stealth", run: cmdStealth },
+    { name: "predict-ml", describe: "ML-based usage prediction (rolling 14-day window)", usage: "nexus autofarm predict-ml", run: cmdPredictMl },
+    { name: "pick", describe: "pick the best provider for a task", usage: "nexus autofarm pick <code|chat|vision|long-context|any>", run: cmdPick },
+    { name: "brain", describe: "ask the LLM brain for the next move", usage: "nexus autofarm brain [prompt]", run: cmdBrain },
   ],
 }
 
