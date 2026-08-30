@@ -34,4 +34,5 @@ logs/
 tsconfig.tsbuildinfo
 **/__pycache__/
 *.pyc
+packages/assistant/src/plugins/autofarm/test-smoke.ts
 

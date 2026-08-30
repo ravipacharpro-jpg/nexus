@@ -27,6 +27,7 @@ const pluginLoaders: Record<string, () => Promise<PluginModule>> = {
   voice: () => import("../plugins/voice"),
   webtest: () => import("../plugins/webtest"),
   workspace: () => import("../plugins/workspace"),
+  autofarm: () => import("../plugins/autofarm"),
 }
 
 export class PluginManager {
