@@ -289,3 +289,186 @@ export function browserLauncherPath(): string {
 export function getPlatform() {
   return platformInfo()
 }
+
+// ── Evidence-augmented wrappers (for Master Agent verification) ────
+
+export interface BrowserEvidence {
+  action: string
+  durationMs: number
+  timestamp: string
+  url?: string
+  selector?: string
+  value?: string
+  text?: string
+  fields?: number
+  messages?: string
+  requests?: unknown[]
+  snapshot?: string
+  result?: unknown
+  note?: string
+}
+
+/** Aggregate evidence for a full browser session. */
+export interface BrowserSessionReport {
+  started: string
+  ended?: string
+  mcpInitialized: boolean
+  platform: string
+  launcher: string
+  actions: BrowserEvidence[]
+  totalDurationMs: number
+  consoleErrors: number
+  networkRequests: number
+  /** Summary text the Master Agent can use as verification. */
+  summary: string
+}
+
+const sessionActions: BrowserEvidence[] = []
+let sessionStart = 0
+let sessionReport: BrowserSessionReport | null = null
+
+export function startSession(): BrowserSessionReport {
+  sessionActions.length = 0
+  sessionStart = Date.now()
+  const info = platformInfo()
+  sessionReport = {
+    started: new Date().toISOString(),
+    mcpInitialized: initialized,
+    platform: `${info.os}/${info.arch}`,
+    launcher: LAUNCHER,
+    actions: sessionActions,
+    totalDurationMs: 0,
+    consoleErrors: 0,
+    networkRequests: 0,
+    summary: "",
+  }
+  return sessionReport
+}
+
+export function endSession(): BrowserSessionReport | null {
+  if (!sessionReport) return null
+  sessionReport.ended = new Date().toISOString()
+  sessionReport.totalDurationMs = Date.now() - sessionStart
+  // Count console errors via a fetch
+  const ce = sessionActions.find((a) => a.action === "consoleMessages")
+  if (ce?.messages) {
+    sessionReport.consoleErrors = (ce.messages.match(/error/gi) || []).length
+  }
+  const nr = sessionActions.find((a) => a.action === "networkRequests")
+  if (Array.isArray(nr?.requests)) {
+    sessionReport.networkRequests = nr.requests.length
+  }
+  sessionReport.summary = [
+    `session: ${sessionReport.actions.length} actions in ${sessionReport.totalDurationMs}ms`,
+    `platform: ${sessionReport.platform}`,
+    `console errors: ${sessionReport.consoleErrors}`,
+    `network requests: ${sessionReport.networkRequests}`,
+    `last url: ${[...sessionActions].reverse().find((a) => a.url)?.url ?? "n/a"}`,
+  ].join(" | ")
+  return sessionReport
+}
+
+export function getSession(): BrowserSessionReport | null {
+  return sessionReport
+}
+
+/** Evidence-augmented navigate: returns BrowserEvidence object. */
+export async function navigateWithEvidence(url: string): Promise<BrowserEvidence> {
+  await ensureReady()
+  const t0 = Date.now()
+  log.info("browser", `navigate ${url}`)
+  try {
+    await call("browser_navigate", { url })
+    const snap = await call<{ snapshot?: string }>("browser_snapshot", {})
+    const ev: BrowserEvidence = {
+      action: "navigate",
+      url,
+      durationMs: Date.now() - t0,
+      timestamp: new Date().toISOString(),
+      snapshot: typeof snap?.snapshot === "string" ? snap.snapshot.slice(0, 2000) : "",
+    }
+    sessionActions.push(ev)
+    return ev
+  } catch (e) {
+    const ev: BrowserEvidence = {
+      action: "navigate",
+      url,
+      durationMs: Date.now() - t0,
+      timestamp: new Date().toISOString(),
+      note: `error: ${(e as Error).message}`,
+    }
+    sessionActions.push(ev)
+    return ev
+  }
+}
+
+/** Evidence-augmented click. */
+export async function clickWithEvidence(selector: string, element?: string): Promise<BrowserEvidence> {
+  await ensureReady()
+  const t0 = Date.now()
+  try {
+    await call("browser_click", element ? { target: selector, element } : { target: selector })
+    const ev: BrowserEvidence = { action: "click", selector, durationMs: Date.now() - t0, timestamp: new Date().toISOString() }
+    sessionActions.push(ev)
+    return ev
+  } catch (e) {
+    const ev: BrowserEvidence = { action: "click", selector, durationMs: Date.now() - t0, timestamp: new Date().toISOString(), note: `error: ${(e as Error).message}` }
+    sessionActions.push(ev)
+    return ev
+  }
+}
+
+/** Evidence-augmented fill. */
+export async function fillWithEvidence(selector: string, value: string, name?: string): Promise<BrowserEvidence> {
+  await ensureReady()
+  const t0 = Date.now()
+  try {
+    await call("browser_fill_form", {
+      fields: [{ target: selector, name: name ?? selector, type: "textbox", value }],
+    })
+    // redacted value for security
+    const ev: BrowserEvidence = {
+      action: "fill",
+      selector,
+      value: "***redacted***",
+      durationMs: Date.now() - t0,
+      timestamp: new Date().toISOString(),
+    }
+    sessionActions.push(ev)
+    return ev
+  } catch (e) {
+    const ev: BrowserEvidence = { action: "fill", selector, value: "***redacted***", durationMs: Date.now() - t0, timestamp: new Date().toISOString(), note: `error: ${(e as Error).message}` }
+    sessionActions.push(ev)
+    return ev
+  }
+}
+
+/** Get full session report as JSON-serializable verification evidence. */
+export function getVerificationEvidence(): {
+  ok: boolean
+  evidence: string[]
+  receipts: Array<{ kind: string; summary: string }>
+  artifacts: string[]
+} {
+  if (!sessionReport) {
+    return { ok: false, evidence: ["no browser session started"], receipts: [], artifacts: [] }
+  }
+  const evidence: string[] = []
+  const receipts: Array<{ kind: string; summary: string }> = []
+  const artifacts: string[] = []
+  for (const a of sessionActions) {
+    const line = `${a.timestamp} ${a.action} ${a.durationMs}ms${a.url ? " url=" + a.url : ""}${a.selector ? " sel=" + a.selector : ""}${a.note ? " note=" + a.note : ""}`
+    evidence.push(line)
+    receipts.push({ kind: a.action, summary: line })
+  }
+  if (sessionReport.consoleErrors === 0) {
+    evidence.push("console: no errors detected")
+    receipts.push({ kind: "console-clean", summary: "0 errors" })
+  } else {
+    evidence.push(`console: ${sessionReport.consoleErrors} error(s) detected`)
+  }
+  evidence.push(`network: ${sessionReport.networkRequests} request(s) made`)
+  evidence.push(`session duration: ${sessionReport.totalDurationMs}ms`)
+  artifacts.push(`browser-session-${sessionStart}.json`)
+  return { ok: true, evidence, receipts, artifacts }
+}
