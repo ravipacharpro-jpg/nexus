@@ -799,6 +799,63 @@ async function cmdReticle(ctx: PluginContext): Promise<number> {
   return 1
 }
 
+async function cmdTui(ctx: PluginContext): Promise<number> {
+  const { spawn } = await import("node:child_process")
+  const { existsSync } = await import("node:fs")
+  const path = await import("node:path")
+  const os = await import("node:os")
+
+  const sub = ctx.args[0] ?? "launch"
+  const tuiScript = path.join(import.meta.dirname ?? "", "lib", "tui.py")
+
+  if (sub === "info") {
+    header("Textual TUI info")
+    ctx.out(`  script:   ${tuiScript}`)
+    ctx.out(`  exists:   ${existsSync(tuiScript) ? "yes" : "NO"}`)
+    ctx.out(`  python:   ${process.env.NEXUS_PYTHON ?? "/data/data/com.termux/files/usr/bin/python3"}`)
+    try {
+      const { execSync } = await import("node:child_process")
+      const out = execSync(`${process.env.NEXUS_PYTHON ?? "python3"} -c "import textual; print(textual.__version__)"`, { encoding: "utf8" }).trim()
+      ctx.out(`  textual:  v${out} (installed)`)
+    } catch {
+      ctx.out(`  textual:  NOT installed (run: pip install textual)`)
+    }
+    return 0
+  }
+
+  if (sub === "launch" || sub === "start") {
+    if (!existsSync(tuiScript)) {
+      ctx.err(`TUI script not found: ${tuiScript}`)
+      return 1
+    }
+    ctx.out(`Launching Textual TUI…  (Ctrl+C to exit)`)
+    const py = process.env.NEXUS_PYTHON ?? "/data/data/com.termux/files/usr/bin/python3"
+    return new Promise<number>((resolve) => {
+      const proc = spawn(py, [tuiScript], { stdio: "inherit" })
+      proc.on("close", (code) => resolve(code ?? 0))
+      proc.on("error", (e) => {
+        ctx.err(`Failed to launch: ${e.message}`)
+        resolve(1)
+      })
+    })
+  }
+
+  if (sub === "run-task") {
+    // Headless mode: run a single task and print step-by-step output
+    const task = ctx.args.slice(1).join(" ") || "status"
+    const { runAgentTask, formatStepsForChat } = await import("./agents/tui-agent.ts")
+    const r = await runAgentTask(task)
+    for (const line of formatStepsForChat(r.steps)) ctx.out(line)
+    ctx.out("")
+    ctx.out(`  ok: ${r.ok}   duration: ${r.ms}ms`)
+    if (r.error) ctx.out(`  error: ${r.error}`)
+    return r.ok ? 0 : 1
+  }
+
+  ctx.out("Subcommands: launch | run-task <text> | info")
+  return 1
+}
+
 const plugin: NexusPlugin = {
   name: "autofarm",
   version: "0.2.1",
@@ -836,6 +893,7 @@ const plugin: NexusPlugin = {
     { name: "queue", describe: "background task queue with retry/timeout", usage: "nexus autofarm queue <status|list|push|cancel|clear>", run: cmdQueue },
     { name: "supply", describe: "demand-supply engine (auto-discover new free providers)", usage: "nexus autofarm supply <status|decide|run|discover|list-custom>", run: cmdSupply },
     { name: "reticle", describe: "Reticle verification layer integration (proofreader for AI agents)", usage: "nexus autofarm reticle <status|check|install|assert>", run: cmdReticle },
+    { name: "tui", describe: "launch the Textual-based Manus-style TUI", usage: "nexus autofarm tui <launch|run-task|info>", run: cmdTui },
   ],
 }
 
