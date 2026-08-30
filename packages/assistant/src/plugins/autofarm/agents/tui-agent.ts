@@ -16,6 +16,7 @@ import { runCycle, decidePublic } from "./orchestrator.ts"
 import { vaultSummary } from "../lib/vault.ts"
 import { decide as dsDecide, snapshotSupply, snapshotDemand } from "../lib/demand-supply.ts"
 import { taskQueue } from "../lib/queue.ts"
+import { paintStatus, paintSection, paintMetric, paintDivider, ICONS, COLORS } from "../lib/ui-icons.ts"
 
 export interface AgentStep {
   text: string
