@@ -494,6 +494,159 @@ async function cmdEval(ctx: PluginContext): Promise<number> {
   return 1
 }
 
+async function cmdWebhook(ctx: PluginContext): Promise<number> {
+  const { webhookManager, sendWebhook, getConfig, saveConfig } = await import("./lib/webhooks.ts")
+  const sub = ctx.args[0] ?? "status"
+  if (sub === "status") {
+    const cfg = getConfig()
+    header("Webhook config")
+    ctx.out(`  enabled:  ${cfg.enabled !== false ? "yes" : "NO"}`)
+    ctx.out(`  minLevel: ${cfg.minLevel ?? "warn"}`)
+    ctx.out(`  slack:    ${cfg.slack?.url ? "✓ configured" : "—"}`)
+    ctx.out(`  discord:  ${cfg.discord?.url ? "✓ configured" : "—"}`)
+    ctx.out(`  telegram: ${cfg.telegram?.botToken ? "✓ configured" : "—"}`)
+    ctx.out(`  generic:  ${cfg.generic?.length ?? 0} hook(s)`)
+    ctx.out(`  config:   ${dim(webhookManager.getPath())}`)
+    return 0
+  }
+  if (sub === "test") {
+    ctx.out("Testing all configured webhooks…")
+    const results = await webhookManager.testAll()
+    for (const r of results) {
+      ctx.out(`  ${r.ok ? Icon.success : Icon.error} ${r.target}${r.error ? " — " + r.error : ""}`)
+    }
+    return 0
+  }
+  if (sub === "demo") {
+    ctx.out("Sending demo event: key-exhausted…")
+    const r = await sendWebhook({
+      kind: "key-exhausted",
+      message: "Groq is at 95% of daily free tier",
+      provider: "groq",
+      data: { usedToday: 475000, dailyLimit: 500000, daysToExhaust: 0.3 },
+    })
+    ctx.out(`  fired: ${r.fired}  errors: ${r.errors.length}`)
+    for (const e of r.errors) ctx.out(`  ! ${e.target}: ${e.error}`)
+    return 0
+  }
+  if (sub === "enable") {
+    const cfg = getConfig()
+    saveConfig({ ...cfg, enabled: true })
+    ctx.out("webhooks enabled")
+    return 0
+  }
+  if (sub === "disable") {
+    const cfg = getConfig()
+    saveConfig({ ...cfg, enabled: false })
+    ctx.out("webhooks disabled")
+    return 0
+  }
+  ctx.out("Subcommands: status | test | demo | enable | disable")
+  return 1
+}
+
+async function cmdCost(ctx: PluginContext): Promise<number> {
+  const { dailyCost, monthlyCost, allTimeCost, estimateCost, listPriced, costLogPath } = await import("./lib/cost.ts")
+  const sub = ctx.args[0] ?? "today"
+  if (sub === "today") {
+    const d = dailyCost()
+    header("Cost tracker — today")
+    ctx.out(`  calls:    ${d.calls}`)
+    ctx.out(`  total:    $${d.totalUsd.toFixed(6)}`)
+    ctx.out(`  free:     $${d.freeUsd.toFixed(6)}`)
+    ctx.out(`  paid:     $${d.paidUsd.toFixed(6)}`)
+    if (Object.keys(d.byProvider).length) {
+      ctx.out("  by provider:")
+      for (const [p, c] of Object.entries(d.byProvider).sort((a, b) => b[1] - a[1])) {
+        ctx.out(`    ${p.padEnd(20)} $${c.toFixed(6)}`)
+      }
+    }
+    ctx.out(`  log:      ${dim(costLogPath())}`)
+    return 0
+  }
+  if (sub === "month") {
+    const d = monthlyCost()
+    header("Cost tracker — this month")
+    ctx.out(`  calls: ${d.calls}   total: $${d.totalUsd.toFixed(6)}   free: $${d.freeUsd.toFixed(6)}   paid: $${d.paidUsd.toFixed(6)}`)
+    return 0
+  }
+  if (sub === "all") {
+    const d = allTimeCost()
+    header("Cost tracker — all time")
+    ctx.out(`  calls: ${d.calls}   total: $${d.totalUsd.toFixed(6)}`)
+    return 0
+  }
+  if (sub === "estimate") {
+    const provider = ctx.args[1] ?? "groq"
+    const inT = Number(ctx.args[2]) || 1000
+    const outT = Number(ctx.args[3]) || 500
+    const e = estimateCost(provider, inT, outT)
+    ctx.out(`  ${provider}: ${inT} in + ${outT} out = $${e.costUsd.toFixed(6)} ${e.isFree ? "(free)" : "(paid)"}`)
+    return 0
+  }
+  if (sub === "pricing") {
+    header("Pricing catalog")
+    const rows = listPriced()
+    for (const r of rows) {
+      ctx.out(`  ${(r.provider + (r.model ? ":" + r.model : "")).padEnd(32)} in=$${r.pricing.inputPerMTok}/Mtok  out=$${r.pricing.outputPerMTok}/Mtok  ${r.pricing.isFree ? "FREE" : "PAID"}`)
+    }
+    return 0
+  }
+  ctx.out("Subcommands: today | month | all | estimate <provider> <in> <out> | pricing")
+  return 1
+}
+
+async function cmdQueue(ctx: PluginContext): Promise<number> {
+  const { taskQueue } = await import("./lib/queue.ts")
+  const sub = ctx.args[0] ?? "status"
+  if (sub === "status") {
+    const s = taskQueue.status()
+    header("Task queue")
+    ctx.out(`  running:  ${s.running ? "yes" : "no"}`)
+    ctx.out(`  pending:  ${s.pending}`)
+    ctx.out(`  done:     ${s.done}`)
+    ctx.out(`  failed:   ${s.failed}`)
+    if (Object.keys(s.byType).length) {
+      ctx.out("  by type:")
+      for (const [t, c] of Object.entries(s.byType)) ctx.out(`    ${t.padEnd(20)} ${c}`)
+    }
+    ctx.out(`  file:     ${dim(taskQueue.path())}`)
+    return 0
+  }
+  if (sub === "list") {
+    const tasks = taskQueue.list().slice(0, 20)
+    ctx.out(`  ${tasks.length} most recent tasks`)
+    for (const t of tasks) {
+      const status = t.status === "done" ? Icon.success : t.status === "failed" ? Icon.error : t.status === "running" ? Icon.info : "·"
+      ctx.out(`  ${status} ${t.id.slice(-12).padEnd(14)} ${t.type.padEnd(20)} pri=${t.priority} ${t.status}`)
+    }
+    return 0
+  }
+  if (sub === "push") {
+    const type = (ctx.args[1] ?? "create-gmail") as "create-gmail" | "farm-provider" | "fix-broken" | "custom"
+    const payloadArg = ctx.args[2] ?? "{}"
+    let payload: Record<string, unknown> = {}
+    try { payload = JSON.parse(payloadArg) } catch { ctx.err("invalid JSON payload"); return 1 }
+    const t = taskQueue.push({ type, payload, priority: Number(ctx.args[3]) || 5 })
+    ctx.out(`  + queued ${t.type} id=${t.id}`)
+    return 0
+  }
+  if (sub === "cancel") {
+    const id = ctx.args[1]
+    if (!id) { ctx.err("usage: cancel <task-id>"); return 1 }
+    const ok = taskQueue.cancel(id)
+    ctx.out(ok ? `cancelled ${id}` : `not found or not cancellable: ${id}`)
+    return 0
+  }
+  if (sub === "clear") {
+    taskQueue.clear()
+    ctx.out("queue cleared")
+    return 0
+  }
+  ctx.out("Subcommands: status | list | push <type> <json> [priority] | cancel <id> | clear")
+  return 1
+}
+
 const plugin: NexusPlugin = {
   name: "autofarm",
   version: "0.2.1",
@@ -526,6 +679,9 @@ const plugin: NexusPlugin = {
     { name: "local", describe: "local LLM server detection (unsloth-lite)", usage: "nexus autofarm local <scan|register|chat>", run: cmdLocal },
     { name: "review", describe: "PR review from a diff (pr-review-lite)", usage: "nexus autofarm review <demo|patch>", run: cmdReview },
     { name: "eval", describe: "agent eval/leaderboard (agenta-lite)", usage: "nexus autofarm eval <demo|stats|list>", run: cmdEval },
+    { name: "webhook", describe: "outbound webhooks to Slack/Discord/Telegram", usage: "nexus autofarm webhook <status|test|demo|enable|disable>", run: cmdWebhook },
+    { name: "cost", describe: "LLM cost tracker (per-day, per-month, all-time)", usage: "nexus autofarm cost <today|month|all|estimate|pricing>", run: cmdCost },
+    { name: "queue", describe: "background task queue with retry/timeout", usage: "nexus autofarm queue <status|list|push|cancel|clear>", run: cmdQueue },
   ],
 }
 
