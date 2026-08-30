@@ -596,6 +596,104 @@ async function cmdCost(ctx: PluginContext): Promise<number> {
   return 1
 }
 
+async function cmdApiManager(ctx: PluginContext): Promise<number> {
+  const { listManagedProviders, manageOnce, scoutAll, freeAndCompatible } = await import("./agents/api-manager-agent.ts")
+  const sub = ctx.args[0] ?? "status"
+  if (sub === "status") {
+    const providers = listManagedProviders()
+    header("API manager — managed providers")
+    ctx.out(`  total:        ${providers.length}`)
+    ctx.out(`  active keys:  ${providers.reduce((s, p) => s + p.activeKeys, 0)}/${providers.reduce((s, p) => s + p.keysHeld, 0)}`)
+    ctx.out(`  daily budget: ${providers.reduce((s, p) => s + p.freePerDay * p.activeKeys, 0).toLocaleString()}`)
+    ctx.out("")
+    for (const p of providers.slice(0, 12)) {
+      const icon = p.status === "ok" ? "✓" : p.status === "low" ? "!" : p.status === "critical" ? "✗" : "?"
+      const ratio = p.freePerDay > 0 ? (p.usedToday / p.freePerDay * 100).toFixed(0) + "%" : "?"
+      ctx.out(`  ${icon} ${p.id.padEnd(14)} keys=${p.activeKeys}/${p.keysHeld} used=${p.usedToday}/${p.freePerDay} (${ratio})  →  ${p.recommendation}`)
+    }
+    return 0
+  }
+  if (sub === "scout") {
+    ctx.out("Scouting internet for free LLM providers…")
+    const all = await scoutAll()
+    const good = freeAndCompatible(all)
+    ctx.out(`  found: ${all.length} candidates, ${good.length} free+openai-compat`)
+    for (const c of good.slice(0, 8)) {
+      ctx.out(`    [${c.source.padEnd(11)}] score=${(c.score * 100).toFixed(0).padStart(3)}%  ${c.name.slice(0, 60)}`)
+      ctx.out(`                   ${dim(c.url.slice(0, 70))}`)
+    }
+    return 0
+  }
+  if (sub === "run" || sub === "manage") {
+    ctx.out("Running full manager cycle (scout → validate → rotate → queue)…")
+    const r = await manageOnce({})
+    header("Manager cycle result")
+    ctx.out(`  providers:    ${r.providers.length}`)
+    ctx.out(`  active:       ${r.totalActive}`)
+    ctx.out(`  utilization:  ${(r.utilizationPct * 100).toFixed(1)}%`)
+    ctx.out(`  candidates:   ${r.candidates.length} new from scout`)
+    ctx.out(`  next action:  ${r.nextAction}`)
+    if (r.actions.length) {
+      ctx.out("  actions taken:")
+      for (const a of r.actions) ctx.out(`    + ${a}`)
+    }
+    return 0
+  }
+  ctx.out("Subcommands: status | scout | run")
+  return 1
+}
+
+async function cmdBugs(ctx: PluginContext): Promise<number> {
+  const { detectOnce, startMonitoring, getRecentBugs, thisDevice, bugLogPath } = await import("./lib/bug-detector.ts")
+  const sub = ctx.args[0] ?? "scan"
+  if (sub === "scan") {
+    header("Bug detector — single scan")
+    const findings = detectOnce()
+    ctx.out(`  findings: ${findings.length}`)
+    for (const f of findings) {
+      ctx.out(`  ${f.severity.toUpperCase().padEnd(8)} [${f.category}] ${f.title}`)
+      if (f.suggestedFix) ctx.out(`           fix: ${f.suggestedFix}`)
+    }
+    return 0
+  }
+  if (sub === "recent") {
+    const recent = getRecentBugs(20)
+    header("Recent bug reports")
+    ctx.out(`  total stored: ${recent.length}`)
+    for (const b of recent.slice(0, 10)) {
+      ctx.out(`  ${b.severity.toUpperCase().padEnd(8)} [${b.category.padEnd(8)}] ${b.title}`)
+      ctx.out(`           ${new Date(b.ts).toISOString()} on ${b.device?.hostname ?? "?"}`)
+    }
+    ctx.out(`  log: ${dim(bugLogPath())}`)
+    return 0
+  }
+  if (sub === "device") {
+    const d = thisDevice()
+    header("This device")
+    ctx.out(`  hostname:  ${d.hostname}`)
+    ctx.out(`  os:        ${d.os}`)
+    ctx.out(`  arch:      ${d.arch}`)
+    ctx.out(`  uptime:    ${Math.round(d.uptime)}s`)
+    ctx.out(`  node:      ${d.nodeVersion}`)
+    ctx.out(`  workspace: ${d.workspace}`)
+    return 0
+  }
+  if (sub === "monitor") {
+    const interval = Number(ctx.args[1]) || 60_000
+    const m = startMonitoring(interval)
+    header("Real-time monitor started")
+    ctx.out(`  interval: ${interval}ms`)
+    ctx.out(`  device:   ${thisDevice().hostname}`)
+    ctx.out(`  mode:     continuous (no login required)`)
+    ctx.out("")
+    ctx.out("Press Ctrl+C to stop (or close TUI).")
+    // Keep the app alive while monitoring — sleep until interrupted
+    return new Promise<number>(() => {}) // never resolves — caller must ctrl-c
+  }
+  ctx.out("Subcommands: scan | recent | device | monitor [intervalMs]")
+  return 1
+}
+
 async function cmdQueue(ctx: PluginContext): Promise<number> {
   const { taskQueue } = await import("./lib/queue.ts")
   const sub = ctx.args[0] ?? "status"
@@ -894,6 +992,8 @@ const plugin: NexusPlugin = {
     { name: "supply", describe: "demand-supply engine (auto-discover new free providers)", usage: "nexus autofarm supply <status|decide|run|discover|list-custom>", run: cmdSupply },
     { name: "reticle", describe: "Reticle verification layer integration (proofreader for AI agents)", usage: "nexus autofarm reticle <status|check|install|assert>", run: cmdReticle },
     { name: "tui", describe: "launch the Textual-based Manus-style TUI", usage: "nexus autofarm tui <launch|run-task|info>", run: cmdTui },
+    { name: "api-manager", describe: "API manager: scout internet for free LLM keys, rotate, manage", usage: "nexus autofarm api-manager <status|scout|run>", run: cmdApiManager },
+    { name: "bugs", describe: "real-time bug detector + health monitor (no login required)", usage: "nexus autofarm bugs <scan|recent|device|monitor [intervalMs]>", run: cmdBugs },
   ],
 }
 
