@@ -87,7 +87,7 @@ export class RotationEngine {
   /** Provider failures that should advance to another configured engine. */
   static isFallbackable(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error)
-    return /rate.?limit|too many requests|quota exceeded|freeusagelimit|(?:model|resource).*(?:not found|does not exist|do not have access)|(?:not found|does not exist).*(?:model|resource)|invalid[_ -]?api[_ -]?key|api[_ -]?key.*(?:invalid|not valid)|(?:invalid|missing).*(?:authentication|credentials)|unauthorized|forbidden|missing authentication header|(?:status|http|error)?\s*[:(]?\s*(?:401|403|404|429)\b|unexpected server error|failed to fetch/i.test(
+    return /rate.?limit|too many requests|quota exceeded|freeusagelimit|(?:model|resource).*(?:not found|does not exist|do not have access|unavailable)|(?:not found|does not exist|unavailable).*(?:model|resource)|model is unavailable|unavailable|overloaded|capacity|temporarily unavailable|extra_content|tool_calls.*extra|invalid[_ -]?api[_ -]?key|api[_ -]?key.*(?:invalid|not valid)|(?:invalid|missing).*(?:authentication|credentials)|unauthorized|forbidden|missing authentication header|(?:status|http|error)?\s*[:(]?\s*(?:401|403|404|429|529|503)\b|unexpected server error|failed to fetch/i.test(
       message,
     )
   }

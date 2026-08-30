@@ -504,13 +504,14 @@ const live: Layer.Layer<
                     }
                     yield* provider.invalidateLanguage(candidate.providerID, candidate.modelID)
                     const sameProviderKeyCount = yield* provider.rotationKeyCount(candidate.providerID)
-                    if (sameProviderKeyCount > retryCount + 1) {
+                    // User request: max 1 retry per provider, then suggest alternatives. Enforce retryCount < 1.
+                    if (sameProviderKeyCount > retryCount + 1 && retryCount < 1) {
                       // Exponential backoff keeps rate-limited key rotation from
                       // hammering the provider; credential failures retry at once.
                       if (rateLimited) {
                         yield* Effect.sleep(`${Math.min(2 ** retryCount * 1000, 8000)} millis`)
                       }
-                      yield* Effect.logWarning("provider failed; retrying same provider with next key", {
+                      yield* Effect.logWarning("provider failed; retrying same provider with next key (max 1 retry)", {
                         providerID: candidate.providerID,
                         modelID: candidate.modelID,
                         retryCount: retryCount + 1,
@@ -519,7 +520,25 @@ const live: Layer.Layer<
                       return yield* attempt(remaining, retryCount + 1)
                     }
 
-                    if (rest.length === 0) return yield* Effect.failCause(cause as Cause.Cause<unknown>)
+                    if (rest.length === 0) {
+                      // Autonomous suggestion: list runnable alternatives for user selection via /model
+                      const available = candidates
+                        .map((c) => `${c.providerID}/${c.modelID}`)
+                        .slice(0, 8)
+                        .join(", ")
+                      const hint =
+                        available.length > 0
+                          ? ` All fallback candidates exhausted. Runnable alternatives: ${available}. Use /model <provider/model> to switch.`
+                          : " No runnable fallback models available. Check api vault keys."
+                      const pretty = (() => {
+                        try {
+                          return Cause.pretty(cause as Cause.Cause<unknown>)
+                        } catch {
+                          return String(cause)
+                        }
+                      })()
+                      return yield* Effect.fail(new Error(pretty + hint))
+                    }
                     const next = rest[0]
                     yield* Effect.logWarning("provider exhausted; switching model", {
                       fromProviderID: candidate.providerID,
