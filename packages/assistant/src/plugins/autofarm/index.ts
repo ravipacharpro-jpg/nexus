@@ -647,6 +647,106 @@ async function cmdQueue(ctx: PluginContext): Promise<number> {
   return 1
 }
 
+async function cmdSupply(ctx: PluginContext): Promise<number> {
+  const { runOnce, decide: dsDecide, snapshotSupply, snapshotDemand, listCustomProviders, removeCustomProvider } = await import("./lib/demand-supply.ts")
+  const sub = ctx.args[0] ?? "status"
+  if (sub === "status") {
+    const supply = snapshotSupply()
+    const demand = snapshotDemand()
+    const d = dsDecide()
+    header("Demand-supply status")
+    ctx.out(`  Supply:`)
+    ctx.out(`    active keys:    ${supply.totalActive}`)
+    ctx.out(`    daily budget:   ${supply.totalDailyBudget.toLocaleString()}`)
+    ctx.out(`    used today:     ${supply.totalUsedToday.toLocaleString()}`)
+    ctx.out(`    ratio:          ${(supply.ratio * 100).toFixed(1)}%`)
+    ctx.out(`  Demand:`)
+    ctx.out(`    models tracked: ${demand.models.length}`)
+    ctx.out(`    total tokens:   ${demand.totalTokens.toLocaleString()}`)
+    ctx.out(`    hotness:        ${(demand.hotness * 100).toFixed(0)}%`)
+    ctx.out(`    top:            ${demand.topProvider ?? "(none)"}`)
+    ctx.out(`  Decision:`)
+    ctx.out(`    status:         ${d.status}`)
+    ctx.out(`    recommendation: ${d.recommendation}`)
+    ctx.out(`    reasoning:      ${d.reasoning}`)
+    if (supply.providers.length) {
+      ctx.out(`  Providers (${supply.providers.length}):`)
+      for (const p of supply.providers.slice(0, 10)) {
+        const ratio = p.dailyLimit > 0 ? (p.usedToday / p.dailyLimit * 100).toFixed(0) : "?"
+        ctx.out(`    ${p.id.padEnd(16)} keys=${p.activeKeys} used=${p.usedToday}/${p.dailyLimit} (${ratio}%)`)
+      }
+    }
+    const custom = listCustomProviders()
+    if (custom.length) {
+      ctx.out(`  Auto-discovered (${custom.length}):`)
+      for (const c of custom) ctx.out(`    ${c.name.padEnd(16)} ${c.url.slice(0, 40)}...`)
+    }
+    return 0
+  }
+  if (sub === "decide") {
+    const d = dsDecide()
+    header("Decision")
+    ctx.out(`  status:         ${d.status}`)
+    ctx.out(`  recommendation: ${d.recommendation}`)
+    ctx.out(`  gap:            ${d.gap}`)
+    ctx.out(`  ratio:          ${(d.ratio * 100).toFixed(1)}%`)
+    ctx.out(`  reasoning:      ${d.reasoning}`)
+    return 0
+  }
+  if (sub === "run" || sub === "cycle") {
+    ctx.out(`Running demand-supply cycle (this may take 30-60s for discovery)…`)
+    const r = await runOnce({ autoAdd: true, autoFarm: true, autoNotify: false })
+    header("Cycle result")
+    ctx.out(`  decision:    ${r.decision.recommendation}`)
+    ctx.out(`  reasoning:   ${r.decision.reasoning}`)
+    ctx.out(`  discovered:  ${r.discovered.length} candidates`)
+    ctx.out(`  validated:   ${r.validated.length} (${r.decision.validatedCount} high-score)`)
+    ctx.out(`  added:       ${r.addedToCatalog.length} new providers`)
+    if (r.addedToCatalog.length) for (const a of r.addedToCatalog) ctx.out(`    + ${a}`)
+    ctx.out(`  queued:      ${r.queuedTasks.length} tasks`)
+    ctx.out(`  duration:    ${r.ms}ms`)
+    if (r.discovered.length > 0) {
+      ctx.out(`  top discoveries:`)
+      for (const d of r.discovered.slice(0, 5)) {
+        ctx.out(`    [${d.source.padEnd(11)}] ${d.title.slice(0, 60)} (${d.score ?? "?"} pts)`)
+      }
+    }
+    if (r.validated.length > 0) {
+      ctx.out(`  top validated:`)
+      for (const v of r.validated.slice(0, 5)) {
+        ctx.out(`    [${(v.score * 100).toFixed(0).padStart(3)}%] ${v.title.slice(0, 50)} oai=${v.hasOpenAICompat ? "Y" : "n"} free=${v.hasFreeTier ? "Y" : "n"} signup=${v.hasSignup ? "Y" : "n"}`)
+      }
+    }
+    return 0
+  }
+  if (sub === "discover") {
+    const { discoverAll } = await import("../lib/discovery.ts")
+    ctx.out("Searching HackerNews, GitHub, DuckDuckGo for free LLM providers…")
+    const found = await discoverAll()
+    ctx.out(`  ${found.length} candidates`)
+    for (const c of found.slice(0, 15)) {
+      ctx.out(`  [${c.source.padEnd(11)}] ${c.title.slice(0, 60)} (${c.score ?? "?"} pts)`)
+      ctx.out(`                  ${dim(c.url.slice(0, 70))}`)
+    }
+    return 0
+  }
+  if (sub === "list-custom") {
+    const custom = listCustomProviders()
+    if (custom.length === 0) { ctx.out("no custom providers"); return 0 }
+    for (const c of custom) ctx.out(`  ${c.name.padEnd(16)} ${c.url}`)
+    return 0
+  }
+  if (sub === "remove") {
+    const id = ctx.args[1]
+    if (!id) { ctx.err("usage: remove <id>"); return 1 }
+    const ok = removeCustomProvider(id)
+    ctx.out(ok ? `removed ${id}` : `${id} not in custom catalog`)
+    return 0
+  }
+  ctx.out("Subcommands: status | decide | run | discover | list-custom | remove <id>")
+  return 1
+}
+
 const plugin: NexusPlugin = {
   name: "autofarm",
   version: "0.2.1",
@@ -682,6 +782,7 @@ const plugin: NexusPlugin = {
     { name: "webhook", describe: "outbound webhooks to Slack/Discord/Telegram", usage: "nexus autofarm webhook <status|test|demo|enable|disable>", run: cmdWebhook },
     { name: "cost", describe: "LLM cost tracker (per-day, per-month, all-time)", usage: "nexus autofarm cost <today|month|all|estimate|pricing>", run: cmdCost },
     { name: "queue", describe: "background task queue with retry/timeout", usage: "nexus autofarm queue <status|list|push|cancel|clear>", run: cmdQueue },
+    { name: "supply", describe: "demand-supply engine (auto-discover new free providers)", usage: "nexus autofarm supply <status|decide|run|discover|list-custom>", run: cmdSupply },
   ],
 }
 
