@@ -15,12 +15,13 @@ import path from "node:path"
 import os from "node:os"
 import { log } from "./logger.ts"
 import { discoverAll, type ProviderCandidate } from "./discovery.ts"
-import { validateAll, type ValidationResult } from "./validator.ts"
+import { validateAll, reticleVerify, type ValidationResult } from "./validator.ts"
 import { suggestProviderId } from "./validator.ts"
 import { FREE_PROVIDERS, type FreeProvider } from "./config.ts"
 import { record as recordDemand, topModels as topDemand } from "../agents/demand-agent.ts"
 import { taskQueue } from "./queue.ts"
 import { sendWebhook } from "./webhooks.ts"
+import { assert as reticleAssert, isReticleInstalled as reticleInstalled } from "./reticle.ts"
 
 const STATE_PATH = path.join(os.homedir(), ".nexus", "autofarm", "demand-supply.json")
 
@@ -164,13 +165,42 @@ export async function runOnce(opts: { autoAdd?: boolean; autoFarm?: boolean; aut
     log.info("demand-supply", `discovered ${discovered.length} candidates`)
     if (discovered.length) {
       const urls = Array.from(new Set(discovered.map((d) => d.url))).slice(0, opts.discoverLimit ?? 10)
-      validated = await validateAll(urls, 5)
-      decision.validatedCount = validated.filter((v) => v.score >= 0.5).length
-      log.info("demand-supply", `validated ${validated.length} (${decision.validatedCount} high-score)`)
+      // First pass: cheap heuristic validate
+      const shallow = await validateAll(urls, 5)
+      // Second pass: deep verify (try /v1/models) only for those that passed the shallow test
+      const deepPromises = shallow
+        .filter((v) => v.score >= 0.3 && !v.error)
+        .map((v) => reticleVerify(v.url, v.title).then((dv) => ({ ...v, deepScore: dv.deepScore, modelCount: dv.modelCount, modelsEndpoint: dv.modelsEndpoint })))
+      const deep = await Promise.all(deepPromises)
+      validated = deep.length ? deep : shallow
+      decision.validatedCount = validated.filter((v) => (v as ValidationResult & { deepScore?: number }).deepScore !== undefined ? (v as ValidationResult & { deepScore: number }).deepScore >= 0.5 : v.score >= 0.5).length
+      log.info("demand-supply", `validated ${validated.length} (${decision.validatedCount} deep-score>=0.5)`)
+
+      // If Reticle is available, run an end-to-end assert on the top candidate
+      const reticle = await reticleInstalled()
+      if (reticle) {
+        const top = [...validated].sort((a, b) => {
+          const sa = (a as ValidationResult & { deepScore?: number }).deepScore ?? a.score
+          const sb = (b as ValidationResult & { deepScore?: number }).deepScore ?? b.score
+          return sb - sa
+        })[0]
+        if (top) {
+          const v = await reticleAssert({
+            allOf: [
+              { kind: "net", urlContains: "/v1/models", status: 200, count: 1 },
+              { kind: "console", level: "error", absent: true },
+            ],
+            claim: `verify ${top.title} is reachable and exposes models`,
+            timeoutMs: 15_000,
+          })
+          log.info("demand-supply", `reticle verdict for ${top.title}: ${v.verdict}${v.failureReason ? " — " + v.failureReason : ""}`)
+        }
+      }
 
       if (autoAdd) {
         for (const v of validated) {
-          if (v.score < 0.5 || !v.hasFreeTier) continue
+          const score = (v as ValidationResult & { deepScore?: number }).deepScore ?? v.score
+          if (score < 0.5 || !v.hasFreeTier) continue
           if (addProviderToCatalog(v, discovered.find((d) => d.url === v.url))) {
             added.push(suggestProviderId(v.url, v.title))
           }

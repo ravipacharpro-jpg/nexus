@@ -747,6 +747,58 @@ async function cmdSupply(ctx: PluginContext): Promise<number> {
   return 1
 }
 
+async function cmdReticle(ctx: PluginContext): Promise<number> {
+  const { isReticleInstalled, runReticleStatus, readReticleStatus, assert, Reticle, installCommand } = await import("./lib/reticle.ts")
+  const sub = ctx.args[0] ?? "status"
+  if (sub === "status") {
+    header("Reticle (verification layer)")
+    const installed = await isReticleInstalled()
+    ctx.out(`  installed:     ${installed ? "✓" : "✗"}`)
+    const status = readReticleStatus()
+    ctx.out(`  daemon:        ${status.daemonRunning ? "running" : "stopped"}`)
+    ctx.out(`  connected app: ${status.connected ? "✓" : "—"}`)
+    if (status.sessionId) ctx.out(`  session:       ${status.sessionId}`)
+    if (status.appUrl) ctx.out(`  app url:       ${status.appUrl}`)
+    ctx.out(`  message:       ${status.message}`)
+    ctx.out(`  last check:    ${status.lastCheck}`)
+    return 0
+  }
+  if (sub === "check") {
+    const r = await runReticleStatus()
+    header("Reticle daemon status (live)")
+    if (r.ok) ctx.out(r.stdout)
+    else {
+      ctx.out(`  exit: ${r.ms}ms`)
+      ctx.out(`  stderr: ${r.stderr.slice(0, 300)}`)
+    }
+    return 0
+  }
+  if (sub === "install") {
+    header("Reticle install instructions")
+    ctx.out(installCommand())
+    return 0
+  }
+  if (sub === "assert") {
+    // Example: nexus autofarm reticle assert "the API is reachable" net POST /v1/models 200
+    const claim = ctx.args[1] ?? "claim not given"
+    const allOf = [
+      Reticle.netSucceeded("/v1/models"),
+      Reticle.noConsoleErrors(),
+    ]
+    const v = await assert({ allOf, claim })
+    header("Reticle verdict")
+    ctx.out(`  verdict:   ${v.verdict}`)
+    ctx.out(`  pass:      ${v.pass}`)
+    if (v.failureReason) ctx.out(`  reason:    ${v.failureReason}`)
+    if (v.source) ctx.out(`  source:    ${v.source.file}:${v.source.line}`)
+    ctx.out(`  coverage:  ${v.coverage}`)
+    ctx.out(`  duration:  ${v.ms}ms`)
+    return 0
+  }
+  ctx.out("Subcommands: status | check | install | assert <claim>")
+  return 1
+}
+
 const plugin: NexusPlugin = {
   name: "autofarm",
   version: "0.2.1",
@@ -783,6 +835,7 @@ const plugin: NexusPlugin = {
     { name: "cost", describe: "LLM cost tracker (per-day, per-month, all-time)", usage: "nexus autofarm cost <today|month|all|estimate|pricing>", run: cmdCost },
     { name: "queue", describe: "background task queue with retry/timeout", usage: "nexus autofarm queue <status|list|push|cancel|clear>", run: cmdQueue },
     { name: "supply", describe: "demand-supply engine (auto-discover new free providers)", usage: "nexus autofarm supply <status|decide|run|discover|list-custom>", run: cmdSupply },
+    { name: "reticle", describe: "Reticle verification layer integration (proofreader for AI agents)", usage: "nexus autofarm reticle <status|check|install|assert>", run: cmdReticle },
   ],
 }
 
