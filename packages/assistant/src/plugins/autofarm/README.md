@@ -54,6 +54,11 @@ nexus autofarm fix                    # run the fixer agent once
 nexus autofarm demand [search]        # show demand; "search" queries DuckDuckGo
 nexus autofarm providers              # list configured free providers
 nexus autofarm predict                # show predicted exhaustions
+nexus autofarm master [--python] [--loop]
+                                      # unified report (in-process + python)
+nexus autofarm python <sub>           # drive ~/nexus-keyfarm/*.py
+                                      # sub: status | auto | farm | test | demand | gmails | create N
+nexus autofarm loop [start [ms]|stop] # loop control
 ```
 
 ## Files
@@ -67,14 +72,16 @@ packages/assistant/src/plugins/autofarm/
 │   ├── monitor-agent.ts        ← usage tracker + exhaustion predictor
 │   ├── demand-agent.ts         ← demand recorder + web discovery
 │   ├── fixer-agent.ts          ← broken-key pruner, browser restart, caps
-│   └── orchestrator.ts         ← demand-supply loop
+│   ├── orchestrator.ts         ← demand-supply loop
+│   └── master.ts               ← unified report (in-process + python)
 ├── lib/
 │   ├── types.ts                ← shared interfaces
 │   ├── config.ts               ← 13 free providers catalog
 │   ├── vault.ts                ← ~/.nexus/api-vault.json manager
 │   ├── browser.ts              ← Playwright MCP wrapper
+│   ├── python-bridge.ts        ← spawn ~/nexus-keyfarm/*.py
 │   └── logger.ts               ← colourised logger → ~/.nexus/autofarm.log
-└── test-smoke.ts               ← 25-test smoke test
+└── test-smoke.ts               ← 31-test smoke suite (excluded from git)
 ```
 
 ## Data layout
