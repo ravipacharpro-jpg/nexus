@@ -297,11 +297,78 @@ async function cmdBrain(ctx: PluginContext): Promise<number> {
   return 0
 }
 
+async function cmdCompress(ctx: PluginContext): Promise<number> {
+  const { compressContext, DefaultConfig } = await import("./lib/compress.ts")
+  if (ctx.args[0] === "demo") {
+    const big = JSON.stringify({ items: Array.from({ length: 200 }, (_, i) => ({ id: i, name: "item " + i, desc: "x".repeat(500), meta: { created: new Date().toISOString() } })) }, null, 2)
+    const messages = [
+      { role: "system" as const, content: "You are a helper." },
+      { role: "user" as const, content: "analyze this JSON please" },
+      { role: "assistant" as const, content: "ok let me see..." },
+      { role: "tool" as const, content: big },
+      { role: "user" as const, content: "summarize" },
+      { role: "user" as const, content: "now" },
+    ]
+    const r = compressContext({ messages, config: DefaultConfig })
+    header("Compression demo")
+    ctx.out(`  tokens: ${r.tokensBefore} -> ${r.tokensAfter} (saved ${r.tokensSaved}, ${(r.compressionRatio * 100).toFixed(1)}%)`)
+    ctx.out(`  transforms: ${r.transformsApplied.join(", ") || "none"}`)
+    ctx.out(`  inflation guard: ${r.inflationGuard ? "triggered" : "no"}`)
+    return 0
+  }
+  ctx.out("Usage: nexus autofarm compress demo")
+  return 1
+}
+
+async function cmdMemory(ctx: PluginContext): Promise<number> {
+  const { startSession, completeSession, recordObservation, search, timeline, getObservationsByIds, getStats, memoryDir } = await import("./lib/memory.ts")
+  const sub = ctx.args[0] ?? "stats"
+  header("Memory subsystem (claude-mem-lite)")
+  ctx.out(`  dir: ${dim(memoryDir())}`)
+  if (sub === "stats") {
+    const s = getStats()
+    ctx.out(`  sessions:    ${s.sessions}`)
+    ctx.out(`  observations: ${s.observations}`)
+    ctx.out(`  oldest:      ${s.oldest ?? "(none)"}`)
+    return 0
+  }
+  if (sub === "demo") {
+    const sess = startSession("autofarm", "demo prompt from CLI")
+    recordObservation({ memorySessionId: sess.memory_session_id, type: "feature", title: "Added compress.ts", text: "headroom-lite compression with 3 strategies", concepts: ["compression", "tokens"] })
+    recordObservation({ memorySessionId: sess.memory_session_id, type: "feature", title: "Added memory.ts", text: "claude-mem-lite 3-layer search with JSONL storage", concepts: ["memory", "fts"] })
+    completeSession(sess.memory_session_id)
+    const s = getStats()
+    ctx.out(`  + recorded 2 observations`)
+    ctx.out(`  sessions: ${s.sessions} | observations: ${s.observations}`)
+    return 0
+  }
+  if (sub === "search") {
+    const q = ctx.args.slice(1).join(" ") || "compression"
+    const r = search({ query: q, limit: 5 })
+    ctx.out(`  query: "${q}"  total: ${r.totalResults}`)
+    for (const o of r.observations) {
+      ctx.out(`  #${o.id}  ${o.type.padEnd(10)}  ${o.title ?? "(no title)"}  ${o.created_at.slice(0, 19)}`)
+      ctx.out(`         ${dim(o.snippet)}`)
+    }
+    return 0
+  }
+  if (sub === "timeline") {
+    const rows = timeline({ depthBefore: 7, depthAfter: 0 })
+    ctx.out(`  ${rows.length} observations in the last 7 days`)
+    for (const o of rows) {
+      ctx.out(`  #${o.id}  ${o.created_at.slice(0, 19)}  ${o.type}  ${o.title ?? ""}`)
+    }
+    return 0
+  }
+  ctx.out("Subcommands: stats | demo | search <query> | timeline")
+  return 1
+}
+
 const plugin: NexusPlugin = {
   name: "autofarm",
-  version: "0.2.0",
+  version: "0.2.1",
   description: "Autonomous API farmer: creates random Gmail accounts, farms free LLM API keys, keeps your vault topped up, and reasons about the best provider for each task.",
-  tags: ["autonomous", "api", "gmail", "farm", "free", "smart", "stealth"],
+  tags: ["autonomous", "api", "gmail", "farm", "free", "smart", "stealth", "v0.1.66"],
   commands: [
     { name: "start", describe: "start background loop", usage: "nexus autofarm start [intervalMs]", run: cmdStart },
     { name: "stop", describe: "stop background loop", usage: "nexus autofarm stop", run: cmdStop },
@@ -324,6 +391,8 @@ const plugin: NexusPlugin = {
     { name: "predict-ml", describe: "ML-based usage prediction (rolling 14-day window)", usage: "nexus autofarm predict-ml", run: cmdPredictMl },
     { name: "pick", describe: "pick the best provider for a task", usage: "nexus autofarm pick <code|chat|vision|long-context|any>", run: cmdPick },
     { name: "brain", describe: "ask the LLM brain for the next move", usage: "nexus autofarm brain [prompt]", run: cmdBrain },
+    { name: "compress", describe: "context compression demo (headroom-lite)", usage: "nexus autofarm compress demo", run: cmdCompress },
+    { name: "memory", describe: "persistent cross-session memory (claude-mem-lite)", usage: "nexus autofarm memory <stats|demo|search|timeline>", run: cmdMemory },
   ],
 }
 

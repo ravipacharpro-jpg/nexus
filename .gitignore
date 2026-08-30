@@ -35,4 +35,6 @@ tsconfig.tsbuildinfo
 **/__pycache__/
 *.pyc
 packages/assistant/src/plugins/autofarm/test-smoke.ts
+packages/assistant/src/plugins/autofarm/test-live.ts
+packages/assistant/src/plugins/autofarm/test-full-cycle.ts
 
