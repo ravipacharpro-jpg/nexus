@@ -37,4 +37,5 @@ tsconfig.tsbuildinfo
 packages/assistant/src/plugins/autofarm/test-smoke.ts
 packages/assistant/src/plugins/autofarm/test-live.ts
 packages/assistant/src/plugins/autofarm/test-full-cycle.ts
+packages/assistant/src/plugins/autofarm/test-browser.ts
 

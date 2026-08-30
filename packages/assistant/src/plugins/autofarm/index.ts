@@ -364,6 +364,136 @@ async function cmdMemory(ctx: PluginContext): Promise<number> {
   return 1
 }
 
+async function cmdLocal(ctx: PluginContext): Promise<number> {
+  const { detectLocalServers, isReachable, pickCheapestModel, registerLocalProviders, chatLocal, evalDir: _ } = await import("./lib/local-llm.ts")
+  const sub = ctx.args[0] ?? "scan"
+  if (sub === "scan") {
+    header("Local LLM servers (unsloth-lite)")
+    ctx.out(`  Probing 5 common ports: 11434 (ollama), 8080 (llama.cpp), 8000 (vllm), 1234 (lmstudio), 11435 (unsloth)`)
+    const found = await detectLocalServers()
+    if (found.length === 0) {
+      ctx.out(`  ${Icon.info} No local LLM server found. Start one of:`)
+      ctx.out(`    ollama serve                # llama.cpp-compatible, port 11434`)
+      ctx.out(`    unsloth start               # unsloth desktop`)
+      ctx.out(`    llama-server -m model.gguf  # llama.cpp, port 8080`)
+    } else {
+      for (const s of found) {
+        ctx.out(`  + ${s.name.padEnd(10)} ${s.baseUrl}  ${s.models.length} models  ${s.latencyMs}ms`)
+        for (const m of s.models.slice(0, 5)) ctx.out(`      - ${m.id}${m.size ? ` (${(m.size / 1e9).toFixed(1)}GB)` : ""}`)
+      }
+    }
+    return 0
+  }
+  if (sub === "register") {
+    const found = await detectLocalServers()
+    if (found.length === 0) {
+      ctx.err("no local servers found")
+      return 1
+    }
+    const r = registerLocalProviders(found)
+    ctx.out(`  added:   ${r.added.join(", ") || "(none)"}`)
+    ctx.out(`  skipped: ${r.skipped.join(", ") || "(none)"}`)
+    return 0
+  }
+  if (sub === "chat") {
+    const found = await detectLocalServers()
+    if (found.length === 0) { ctx.err("no local servers"); return 1 }
+    const pick = pickCheapestModel(found)
+    if (!pick) { ctx.err("no models"); return 1 }
+    const prompt = ctx.args.slice(1).join(" ") || "Say hi in 5 words"
+    const r = await chatLocal(pick.server, pick.model, [{ role: "user", content: prompt }])
+    header(`Local chat: ${pick.server.name} / ${pick.model}`)
+    ctx.out(`  latency: ${r.latencyMs}ms`)
+    ctx.out(`  reply:   ${r.content.slice(0, 500)}`)
+    return 0
+  }
+  ctx.out("Subcommands: scan | register | chat <prompt>")
+  return 1
+}
+
+async function cmdReview(ctx: PluginContext): Promise<number> {
+  const { summarizeDiff, renderReview, reviewPatch, riskOf } = await import("./lib/pr-review.ts")
+  const sub = ctx.args[0] ?? "demo"
+  if (sub === "demo") {
+    const samplePatch = [
+      "diff --git a/packages/api/auth.ts b/packages/api/auth.ts",
+      "--- a/packages/api/auth.ts",
+      "+++ b/packages/api/auth.ts",
+      "@@ -10,6 +10,8 @@ export function login(user, password) {",
+      "   if (!user) return null",
+      "+  const apiKey = process.env.API_KEY",
+      "+  if (apiKey === 'sk-test1234567890abcdef') return user",
+      "   const hash = bcrypt.hashSync(password, 10)",
+      "   return db.query('SELECT * FROM users WHERE password = \"' + hash + '\"')",
+    ].join("\n")
+    const r = reviewPatch(samplePatch)
+    ctx.out(r.review)
+    return 0
+  }
+  if (sub === "patch") {
+    const patch = ctx.args.slice(1).join(" ")
+    if (!patch) { ctx.err("usage: nexus autofarm review patch <diff text>"); return 1 }
+    const r = reviewPatch(patch)
+    ctx.out(r.review)
+    return 0
+  }
+  ctx.out("Subcommands: demo | patch <diff>")
+  return 1
+}
+
+async function cmdEval(ctx: PluginContext): Promise<number> {
+  const { startRun, listRuns, aggregateStats, getRun, evalDir } = await import("./lib/eval.ts")
+  const sub = ctx.args[0] ?? "stats"
+  if (sub === "demo") {
+    const r = startRun("gmail-signup", { account: "nfarm***@gmail.com" })
+    r.recordStep("navigate", { ok: true, ms: 1234 })
+    r.recordStep("fill-form", { ok: true, ms: 567 })
+    r.recordStep("submit", { ok: false, ms: 89, detail: "captcha" })
+    r.score("success", 0.0, "rule:ok-false", "captcha blocked")
+    r.score("speed", 0.6, "rule:duration", "1890ms total")
+    const done = await r.finish({ ok: false, error: "captcha" })
+    ctx.out(`  + run id: ${done.id}`)
+    ctx.out(`  + steps:  ${done.steps.length}`)
+    ctx.out(`  + scores: ${done.scores.length}`)
+    return 0
+  }
+  if (sub === "stats") {
+    const runs = listRuns(100)
+    const stats = aggregateStats(runs)
+    header("Agent eval (agenta-lite)")
+    ctx.out(`  dir:        ${dim(evalDir())}`)
+    ctx.out(`  total runs: ${stats.totalRuns}`)
+    ctx.out(`  ok rate:    ${(stats.okRate * 100).toFixed(1)}%`)
+    ctx.out(`  avg latency: ${stats.avgLatencyMs.toFixed(0)}ms`)
+    if (Object.keys(stats.byTask).length > 0) {
+      ctx.out("")
+      ctx.out("  by task:")
+      for (const [task, s] of Object.entries(stats.byTask)) {
+        ctx.out(`    ${task.padEnd(20)} n=${s.count}  ok=${(s.okRate * 100).toFixed(0)}%  ms=${s.avgLatencyMs.toFixed(0)}`)
+      }
+    }
+    if (Object.keys(stats.byScore).length > 0) {
+      ctx.out("")
+      ctx.out("  by score:")
+      for (const [m, s] of Object.entries(stats.byScore)) {
+        ctx.out(`    ${m.padEnd(20)} n=${s.count}  avg=${s.avgValue.toFixed(2)}`)
+      }
+    }
+    return 0
+  }
+  if (sub === "list") {
+    const runs = listRuns(20)
+    ctx.out(`  ${runs.length} most recent runs`)
+    for (const r of runs) {
+      const status = r.ok ? Icon.success : Icon.warn
+      ctx.out(`  ${status} ${r.id}  ${r.task.padEnd(20)}  ${r.totalMs ?? 0}ms  ${r.startedAt}`)
+    }
+    return 0
+  }
+  ctx.out("Subcommands: demo | stats | list")
+  return 1
+}
+
 const plugin: NexusPlugin = {
   name: "autofarm",
   version: "0.2.1",
@@ -393,6 +523,9 @@ const plugin: NexusPlugin = {
     { name: "brain", describe: "ask the LLM brain for the next move", usage: "nexus autofarm brain [prompt]", run: cmdBrain },
     { name: "compress", describe: "context compression demo (headroom-lite)", usage: "nexus autofarm compress demo", run: cmdCompress },
     { name: "memory", describe: "persistent cross-session memory (claude-mem-lite)", usage: "nexus autofarm memory <stats|demo|search|timeline>", run: cmdMemory },
+    { name: "local", describe: "local LLM server detection (unsloth-lite)", usage: "nexus autofarm local <scan|register|chat>", run: cmdLocal },
+    { name: "review", describe: "PR review from a diff (pr-review-lite)", usage: "nexus autofarm review <demo|patch>", run: cmdReview },
+    { name: "eval", describe: "agent eval/leaderboard (agenta-lite)", usage: "nexus autofarm eval <demo|stats|list>", run: cmdEval },
   ],
 }
 
