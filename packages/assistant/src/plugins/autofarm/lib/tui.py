@@ -28,11 +28,16 @@ try:
     from textual.reactive import reactive
     from textual.binding import Binding
     from textual.suggester import Suggester
-    from textual.autocomplete import AutoComplete
     from textual import on
 except ImportError:
     print("textual not installed. Run: pip install textual", file=sys.stderr)
     sys.exit(2)
+
+# textual.autocomplete was added in textual 0.85+ — wrap in try/except for older versions
+try:
+    from textual.autocomplete import AutoComplete  # type: ignore
+except ImportError:
+    AutoComplete = None  # type: ignore
 
 
 # ── Color palette (Claude/Linear style) ─────────────────────────────
@@ -154,10 +159,12 @@ def typing_indicator(frame: int = 0) -> str:
 class LiveStatus(Static):
     """Live counter widget that updates every 1s with token/cost info."""
 
-    calls = reactive(0)
-    cost = reactive(0.0)
-    keys = reactive(0)
-    uptime_start = reactive(0.0)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.calls = 0
+        self.cost = 0.0
+        self.keys = 0
+        self.uptime_start = 0.0
 
     def on_mount(self) -> None:
         self.uptime_start = time.time()
@@ -354,10 +361,11 @@ class CustomTuiAgent(App):
                 wrap=True,
                 auto_scroll=True,
             )
+            # In textual 8.2.8 Input does NOT accept `prompt=` — use placeholder
+            # with a leading chevron instead.
             yield Input(
-                placeholder="Type a task — Tab to complete, ↑↓ for history, ? for help",
+                placeholder="▸ Type a task — Tab to complete, ↑↓ for history, ? for help",
                 id="input_box",
-                prompt=paint("▸"),
                 suggester=CommandSuggester(),
             )
         yield Footer()

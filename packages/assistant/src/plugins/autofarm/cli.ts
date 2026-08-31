@@ -13,6 +13,9 @@ import { detectOnce, startMonitoring, getRecentBugs, thisDevice, bugLogPath } fr
 import { recordReport, formatForNUI, getLatestReport, latestReportPath } from "./lib/bug-reporter.ts"
 import { sendWebhook } from "./lib/webhooks.ts"
 import { log } from "./lib/logger.ts"
+import { spawnSync } from "node:child_process"
+import { join } from "node:path"
+import { homedir } from "node:os"
 
 const BANNER = `
   ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗
@@ -213,6 +216,48 @@ function main() {
       return
     }
 
+    case "tui": {
+      // Launch the Textual-based premium TUI (Python).
+      // This is the interactive Manus-style UI described in the autofarm README.
+      // Use absolute python3.14 path (the one that has textual installed).
+      const tuiScript = join(
+        homedir(),
+        "nexus",
+        "packages",
+        "assistant",
+        "src",
+        "plugins",
+        "autofarm",
+        "lib",
+        "tui.py",
+      )
+      // Probe for python that has textual installed
+      const candidates = [
+        "/data/data/com.termux/files/usr/bin/python3.14",
+        "/data/data/com.termux/files/usr/bin/python3",
+        "/usr/bin/python3",
+        "python3",
+      ]
+      const probe = (py: string): boolean => {
+        const r = spawnSync(py, ["-c", "import textual"], { stdio: "pipe" })
+        return r.status === 0
+      }
+      const py = candidates.find((c) => probe(c)) ?? candidates[0]
+      console.log(`Launching Textual TUI…  (Ctrl+C to exit)`)
+      console.log(`  script: ${tuiScript}`)
+      console.log(`  python: ${py}`)
+      // Inherit env so PYTHONPATH/USERBASE match the shell
+      const r = spawnSync(py, [tuiScript], {
+        stdio: "inherit",
+        env: { ...process.env, PYTHONPATH: process.env.PYTHONPATH ?? "" },
+      })
+      if (r.status !== 0) {
+        console.log(`\nTUI exited with code ${r.status}`)
+        if (r.error) console.log(`  error: ${r.error.message}`)
+      }
+      return
+    }
+
     case "help":
     default: {
       console.log("Available commands:")
@@ -225,6 +270,7 @@ function main() {
         ["bugs <scan|device|monitor>", "real-time bug detector"],
         ["queue", "task queue status"],
         ["heal [ms]", "start self-healing loop"],
+        ["tui", "launch the interactive Textual TUI (premium UI)"],
         ["version", "show version"],
         ["help", "this help"],
       ]
