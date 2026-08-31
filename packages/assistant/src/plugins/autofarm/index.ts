@@ -694,6 +694,61 @@ async function cmdBugs(ctx: PluginContext): Promise<number> {
   return 1
 }
 
+async function cmdHealth(ctx: PluginContext): Promise<number> {
+  const { healthCheck, startHealing, getLastSummary } = await import("./lib/auto-fixer.ts")
+  const { recordReport, formatForNUI, getLatestReport, latestReportPath } = await import("./lib/bug-reporter.ts")
+  const sub = ctx.args[0] ?? "check"
+  if (sub === "check" || sub === "fix") {
+    const dryRun = ctx.args[1] === "--dry-run"
+    header("Self-healing health check" + (dryRun ? " (DRY RUN)" : ""))
+    const s = healthCheck(dryRun)
+    ctx.out(`  findings:  ${s.findings}`)
+    ctx.out(`  fixed:     ${s.fixed}`)
+    ctx.out(`  need user: ${s.needsUser}`)
+    ctx.out(`  failed:    ${s.failed}`)
+    ctx.out(`  duration:  ${s.totalMs}ms`)
+    ctx.out("")
+    if (s.details.length === 0) {
+      ctx.out("  ✓ all green — no issues found")
+    } else {
+      for (const d of s.details) {
+        const icon = d.status === "applied" ? Icon.success : d.status === "needs-user" ? Icon.warn : d.status === "failed" ? Icon.error : Icon.info
+        ctx.out(`  ${icon} [${d.severity}/${d.category}] ${d.title}`)
+        ctx.out(`     ${d.message}`)
+      }
+    }
+    if (!dryRun && s.findings > 0) {
+      // also persist a report
+      const r = recordReport(s)
+      ctx.out("")
+      ctx.out(`  → report saved: ${dim(latestReportPath())}`)
+    }
+    return 0
+  }
+  if (sub === "report") {
+    const r = getLatestReport()
+    if (!r) {
+      ctx.out("no report yet — run: nexus autofarm health check")
+      return 1
+    }
+    ctx.out(formatForNUI(r))
+    return 0
+  }
+  if (sub === "heal") {
+    const interval = Number(ctx.args[1]) || 5 * 60_000
+    const m = startHealing(interval)
+    header("Self-healing started")
+    ctx.out(`  interval: ${interval}ms`)
+    ctx.out(`  mode:     detect → fix → record (continuous)`)
+    ctx.out(`  cycle:    every ${interval / 1000}s`)
+    ctx.out("")
+    ctx.out("Press Ctrl+C to stop.")
+    return new Promise<number>(() => {})
+  }
+  ctx.out("Subcommands: check [--dry-run] | report | heal [intervalMs]")
+  return 1
+}
+
 async function cmdQueue(ctx: PluginContext): Promise<number> {
   const { taskQueue } = await import("./lib/queue.ts")
   const sub = ctx.args[0] ?? "status"
@@ -994,6 +1049,7 @@ const plugin: NexusPlugin = {
     { name: "tui", describe: "launch the Textual-based Manus-style TUI", usage: "nexus autofarm tui <launch|run-task|info>", run: cmdTui },
     { name: "api-manager", describe: "API manager: scout internet for free LLM keys, rotate, manage", usage: "nexus autofarm api-manager <status|scout|run>", run: cmdApiManager },
     { name: "bugs", describe: "real-time bug detector + health monitor (no login required)", usage: "nexus autofarm bugs <scan|recent|device|monitor [intervalMs]>", run: cmdBugs },
+    { name: "health", describe: "auto-fix common bugs + persist report for nexus update", usage: "nexus autofarm health <check|report|heal [intervalMs]>", run: cmdHealth },
   ],
 }
 
