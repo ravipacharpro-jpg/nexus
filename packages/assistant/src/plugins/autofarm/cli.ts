@@ -31,11 +31,16 @@ function header(title: string): string {
 
 function main() {
   const args = process.argv.slice(2)
-  const cmd = args[0] ?? "help"
+  const noBanner = args.includes("--no-banner") || process.env.NEXUS_AUTOFARM_NO_BANNER === "1"
+  // Strip --no-banner from args so it doesn't pollute subcommand parsing
+  const cleanArgs = args.filter((a) => a !== "--no-banner")
+  const cmd = cleanArgs[0] ?? "help"
 
-  console.log(BANNER)
-  console.log(`platform: ${process.platform}/${process.arch}  node: ${process.version}`)
-  console.log("")
+  if (!noBanner) {
+    console.log(BANNER)
+    console.log(`platform: ${process.platform}/${process.arch}  node: ${process.version}`)
+    console.log("")
+  }
 
   switch (cmd) {
     case "status": {
@@ -97,7 +102,7 @@ function main() {
     case "health": {
       (() => {
         console.log(header("SELF-HEALING HEALTH CHECK"))
-        const dry = args[1] === "--dry-run"
+        const dry = cleanArgs[1] === "--dry-run"
         if (dry) console.log("  (DRY RUN)")
         const s = healthCheck(dry)
         console.log(`  findings:  ${s.findings}`)
@@ -136,7 +141,7 @@ function main() {
     }
 
     case "bugs": {
-      const sub = args[1] ?? "scan"
+      const sub = cleanArgs[1] ?? "scan"
       if (sub === "scan") {
         (() => {
           console.log(header("BUG DETECTOR SCAN"))
@@ -162,7 +167,7 @@ function main() {
       }
       if (sub === "monitor") {
         (() => {
-          const interval = Number(args[2]) || 60_000
+          const interval = Number(cleanArgs[2]) || 60_000
           const m = startMonitoring(interval)
           console.log(header("REAL-TIME MONITOR STARTED"))
           console.log(`  interval: ${interval}ms`)
@@ -188,7 +193,7 @@ function main() {
 
     case "heal": {
       (() => {
-        const interval = Number(args[1]) || 5 * 60_000
+        const interval = Number(cleanArgs[1]) || 5 * 60_000
         const m = startHealing(interval)
         console.log(header("SELF-HEALING STARTED"))
         console.log(`  interval: ${interval / 1000}s`)
