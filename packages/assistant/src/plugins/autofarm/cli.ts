@@ -37,9 +37,16 @@ function main() {
   const noBanner = args.includes("--no-banner") || process.env.NEXUS_AUTOFARM_NO_BANNER === "1"
   // Strip --no-banner from args so it doesn't pollute subcommand parsing
   const cleanArgs = args.filter((a) => a !== "--no-banner")
-  const cmd = cleanArgs[0] ?? "help"
+  // Default behaviour: bare `nexus` launches the premium TUI.
+  // Use `nexus help` (or `nexus --help`) to see the command list.
+  const cmd = cleanArgs[0] ?? "tui"
+  const isHelp = cmd === "help" || cmd === "--help" || cmd === "-h"
 
-  if (!noBanner) {
+  if (!noBanner && !isHelp) {
+    // Banner is suppressed for help (banner is in the help table) and
+    // for the TUI launch (it has its own banner).
+  }
+  if (!noBanner && isHelp) {
     console.log(BANNER)
     console.log(`platform: ${process.platform}/${process.arch}  node: ${process.version}`)
     console.log("")
